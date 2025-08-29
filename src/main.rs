@@ -1,37 +1,78 @@
 use std::{net::SocketAddr, time::Duration};
 
+use clap::Parser;
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
 use trailfinder::{
-    config::{AppConfig, DeviceConfig},
+    DeviceType, Owner,
+    brand::{ConfParser, cisco::Cisco, mikrotik::Mikrotik},
+    config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     ssh::{DeviceIdentifier, SshClient},
 };
 
+/// Trailfinder - Network device discovery and configuration parsing tool
+#[derive(Parser)]
+#[command(name = "trailfinder")]
+#[command(about = "A CLI tool for network device discovery and state management")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+struct Cli {
+    /// Enable debug logging (shows detailed SSH authentication and parsing information)
+    #[arg(short, long)]
+    debug: bool,
+
+    /// Path to devices configuration file
+    #[arg(short = 'c', long = "config", default_value = "devices.json")]
+    config_path: String,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = "devices.json";
+    // Parse command line arguments
+    let cli = Cli::parse();
+
+    // Initialize tracing subscriber with CLI options
+    let env_filter = if cli.debug {
+        EnvFilter::new("debug")
+    } else {
+        EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| EnvFilter::new("info"))
+    };
+
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_level(true),
+        )
+        .with(env_filter)
+        .init();
+
+    let config_path = &cli.config_path;
 
     // Load config file, only create if it doesn't exist
     let mut app_config = match AppConfig::load_from_file(config_path) {
         Ok(config) => {
-            println!("Loaded configuration from {}", config_path);
+            info!("Loaded configuration from {}", config_path);
             config
         }
         Err(e) => {
             // Check if file exists but has errors vs doesn't exist
             if std::path::Path::new(config_path).exists() {
-                eprintln!(
-                    "❌ Error loading existing config file '{}': {}",
+                error!(
+                    "Error loading existing config file '{}': {}",
                     config_path, e
                 );
-                eprintln!("💡 Please check the file for JSON syntax errors or permission issues.");
-                eprintln!("📄 You can validate JSON at: https://jsonlint.com/");
+                error!("💡 Please check the file for JSON syntax errors or permission issues.");
+                error!("📄 You can validate JSON at: https://jsonlint.com/");
                 return Err(format!("Config file exists but cannot be loaded: {}", e).into());
             } else {
-                println!(
-                    "📄 Config file '{}' not found, creating default configuration",
+                info!(
+                    "Config file '{}' not found, creating default configuration",
                     config_path
                 );
                 let config = AppConfig::default();
                 config.save_to_file(config_path)?;
-                println!(
+                info!(
                     "✅ Created default config at '{}' - please edit it to add your devices",
                     config_path
                 );
@@ -40,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!(
+    info!(
         "Found {} devices in configuration",
         app_config.devices.len()
     );
@@ -54,23 +95,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     if devices_to_identify.is_empty() {
-        println!("All devices are already identified and up to date");
+        info!("All devices are already identified and up to date");
         return Ok(());
     }
 
-    println!("Identifying {} devices...", devices_to_identify.len());
+    info!("Identifying {} devices...", devices_to_identify.len());
 
     for hostname in devices_to_identify {
-        println!("Processing device: {}", hostname);
+        info!("Processing device: {}", hostname);
 
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_device(&device_config, &app_config) {
-                Ok((brand, device_type)) => {
-                    println!("  Identified as {:?} {:?}", brand, device_type);
+            match identify_and_interrogate_device(&device_config, &app_config) {
+                Ok((brand, device_type, device_state)) => {
+                    info!("Identified as {:?} {:?}", brand, device_type);
                     app_config.update_device_identification(&hostname, brand, device_type)?;
+
+                    // Save device state
+                    match app_config.save_device_state(&hostname, &device_state) {
+                        Ok(()) => info!("Device state saved successfully"),
+                        Err(e) => warn!("Failed to save device state: {}", e),
+                    }
                 }
                 Err(e) => {
-                    println!("  Failed to identify: {}", e);
+                    error!("Failed to identify/interrogate {}: {}", hostname, e);
                 }
             }
         }
@@ -78,16 +125,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Save updated configuration
     app_config.save_to_file(config_path)?;
-    println!("Updated configuration saved to {}", config_path);
+    info!("Updated configuration saved to {}", config_path);
 
     Ok(())
 }
 
-fn identify_device(
+fn identify_and_interrogate_device(
     device_config: &DeviceConfig,
     app_config: &AppConfig,
-) -> Result<(trailfinder::config::DeviceBrand, trailfinder::DeviceType), Box<dyn std::error::Error>>
-{
+) -> Result<(DeviceBrand, DeviceType, DeviceState), Box<dyn std::error::Error>> {
     // Use IP address if provided, otherwise resolve hostname
     let socket_addr = if let Some(ip) = device_config.ip_address {
         SocketAddr::new(ip, device_config.ssh_port.get())
@@ -114,17 +160,17 @@ fn identify_device(
     };
     let timeout = Duration::from_secs(30);
 
-    println!("  Connecting via SSH...");
+    debug!("Connecting via SSH...");
 
     // Try SSH config first, then fall back to manual config
     let mut ssh_client =
         match SshClient::connect_with_ssh_config(&device_config.hostname, socket_addr, timeout) {
             Ok(client) => {
-                println!("  Connected using SSH config");
+                debug!("Connected using SSH config");
                 client
             }
             Err(e) => {
-                println!("  SSH config failed ({}), trying manual config...", e);
+                debug!("SSH config failed ({}), trying manual config...", e);
 
                 let username = device_config
                     .ssh_username
@@ -137,11 +183,19 @@ fn identify_device(
                     .as_deref()
                     .map(shellexpand::tilde);
 
+                // Get passphrase from config or environment variable
+                let env_passphrase = std::env::var("SSH_KEY_PASSPHRASE").ok();
+                let key_passphrase = device_config
+                    .ssh_key_passphrase
+                    .as_deref()
+                    .or_else(|| env_passphrase.as_deref());
+
                 SshClient::connect(
                     socket_addr,
                     username,
                     password.as_deref(),
                     key_path.as_deref(),
+                    key_passphrase,
                     app_config.use_ssh_agent.unwrap_or(true), // Default to true
                     timeout,
                 )?
@@ -150,5 +204,92 @@ fn identify_device(
 
     let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client)?;
 
-    Ok((brand, device_type))
+    info!("Interrogating device configuration... for brand {brand}");
+
+    // Interrogate device based on brand
+    let device_state = match brand {
+        DeviceBrand::Mikrotik => {
+            interrogate_mikrotik_device(&mut ssh_client, device_config, device_type)?
+        }
+        DeviceBrand::Cisco => {
+            interrogate_cisco_device(&mut ssh_client, device_config, device_type)?
+        }
+        _ => {
+            return Err(format!("Interrogation not supported for brand {:?}", brand).into());
+        }
+    };
+
+    Ok((brand, device_type, device_state))
+}
+
+fn interrogate_mikrotik_device(
+    ssh_client: &mut SshClient,
+    device_config: &DeviceConfig,
+    device_type: DeviceType,
+) -> Result<DeviceState, Box<dyn std::error::Error>> {
+    debug!("Fetching MikroTik interfaces...");
+    let interfaces_output = ssh_client.execute_command("/interface print")?;
+
+    debug!("Fetching MikroTik routes...");
+    let routes_output = ssh_client.execute_command("/ip route print")?;
+
+    // Combine outputs for hash calculation
+    let raw_config = format!("{}\n{}", interfaces_output, routes_output);
+
+    // Create parser and parse configuration
+    let mut parser = Mikrotik::new(
+        Some(device_config.hostname.clone()),
+        Owner::from(device_config.notes.clone().unwrap_or_default()),
+        device_type,
+    );
+
+    parser.parse_interfaces(&interfaces_output)?;
+    parser.parse_routes(&routes_output)?;
+
+    let device = parser.build();
+    let device_state = DeviceState::new(device, &raw_config);
+
+    info!(
+        "Parsed {} interfaces and {} routes",
+        device_state.device.interfaces.len(),
+        device_state.device.routes.len()
+    );
+
+    Ok(device_state)
+}
+
+fn interrogate_cisco_device(
+    ssh_client: &mut SshClient,
+    device_config: &DeviceConfig,
+    device_type: DeviceType,
+) -> Result<DeviceState, Box<dyn std::error::Error>> {
+    debug!("Fetching Cisco interfaces...");
+    let interfaces_output = ssh_client.execute_command("show interfaces")?;
+
+    debug!("Fetching Cisco routes...");
+    let routes_output = ssh_client.execute_command("show ip route")?;
+
+    // Combine outputs for hash calculation
+    let raw_config = format!("{}\n{}", interfaces_output, routes_output);
+
+    // Create parser and parse configuration
+    let mut parser = Cisco::new(
+        Some(device_config.hostname.clone()),
+        Owner::from(device_config.notes.clone().unwrap_or_default()),
+        device_type,
+    );
+
+    parser.parse_interfaces(&interfaces_output)?;
+    parser.parse_routes(&routes_output)?;
+
+    let device = parser.build();
+    let device_state = DeviceState::new(device, &raw_config);
+
+    info!(
+        "Parsed {} interfaces and {} routes",
+        device_state.device.interfaces.len(),
+        device_state.device.routes.len()
+    );
+
+    Ok(device_state)
 }

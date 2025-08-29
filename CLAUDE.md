@@ -21,6 +21,19 @@ Trailfinder is a Rust application for network device discovery and configuration
 - `cargo clippy` - Lint checker
 - `cargo fmt` - Format code
 
+### Logging
+The application uses structured logging via the `tracing` crate. Log levels can be controlled with the `RUST_LOG` environment variable:
+
+- `RUST_LOG=error` - Only show errors (minimal output)
+- `RUST_LOG=info` - Show informational messages (default, recommended for normal use)
+- `RUST_LOG=debug` - Show detailed debugging information including SSH authentication attempts
+- `RUST_LOG=trace` - Show maximum verbosity (not currently used)
+
+Examples:
+- `cargo run` - Run with default INFO level logging
+- `RUST_LOG=debug cargo run` - Run with detailed debugging
+- `RUST_LOG=error ./target/release/trailfinder` - Run release build with minimal output
+
 ## Architecture
 
 The codebase follows a standard Rust library + binary structure:
@@ -88,3 +101,4 @@ The application tries SSH config first, then falls back to manual config if SSH 
 
 The project includes sample MikroTik configuration files that are used in tests. The parser functions expect MikroTik's specific command output format for interfaces and routes.
 - no task is complete unless you can run 'just check' and there's no errors or warnings
+- when editing Cargo.toml always try to use cargo commands unless it's impossible

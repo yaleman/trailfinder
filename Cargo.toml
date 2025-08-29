@@ -9,8 +9,11 @@ serde_json = "1.0.143"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 ssh2 = "0.9"
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.47", features = ["full"] }
 ssh_config = "0.1"
-dirs = "5.0"
+dirs = "6.0"
 shellexpand = { version = "3.1.1", features = ["path"] }
 serde_with = { version = "3.14.0", features = ["chrono", "json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4.5.46", features = ["derive"] }

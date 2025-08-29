@@ -1,8 +1,16 @@
-use std::{fs, net::IpAddr, num::NonZeroU16, path::Path};
+use std::{
+    collections::hash_map::DefaultHasher,
+    fmt::Display,
+    fs,
+    hash::{Hash, Hasher},
+    net::IpAddr,
+    num::NonZeroU16,
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DeviceType, Owner};
+use crate::{Device, DeviceType, Owner};
 
 fn default_ssh_port() -> NonZeroU16 {
     NonZeroU16::new(22).expect("22 is a valid non-zero port number")
@@ -18,6 +26,19 @@ pub enum DeviceBrand {
     Other(String),
 }
 
+impl Display for DeviceBrand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceBrand::Unknown => write!(f, "Unknown"),
+            DeviceBrand::Mikrotik => write!(f, "Mikrotik"),
+            DeviceBrand::Cisco => write!(f, "Cisco"),
+            DeviceBrand::Juniper => write!(f, "Juniper"),
+            DeviceBrand::Ubiquiti => write!(f, "Ubiquiti"),
+            DeviceBrand::Other(name) => write!(f, "Other: {}", name),
+        }
+    }
+}
+
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
@@ -30,6 +51,7 @@ pub struct DeviceConfig {
     #[serde(default = "default_ssh_port")]
     pub ssh_port: NonZeroU16,
     pub ssh_key_path: Option<String>,
+    pub ssh_key_passphrase: Option<String>,
     pub last_interrogated: Option<String>, // ISO 8601 timestamp
     pub notes: Option<String>,
 }
@@ -45,9 +67,38 @@ impl Default for DeviceConfig {
             ssh_username: None,
             ssh_port: default_ssh_port(),
             ssh_key_path: None,
+            ssh_key_passphrase: None,
             last_interrogated: None,
             notes: None,
         }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeviceState {
+    pub device: Device,
+    pub timestamp: String, // ISO 8601 timestamp
+    pub config_hash: u64,  // Hash of the raw configuration for change detection
+}
+
+impl DeviceState {
+    pub fn new(device: Device, raw_config: &str) -> Self {
+        let mut hasher = DefaultHasher::new();
+        raw_config.hash(&mut hasher);
+        let config_hash = hasher.finish();
+
+        Self {
+            device,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            config_hash,
+        }
+    }
+
+    pub fn has_config_changed(&self, raw_config: &str) -> bool {
+        let mut hasher = DefaultHasher::new();
+        raw_config.hash(&mut hasher);
+        let new_hash = hasher.finish();
+        self.config_hash != new_hash
     }
 }
 
@@ -56,6 +107,7 @@ pub struct AppConfig {
     pub devices: Vec<DeviceConfig>,
     pub ssh_timeout_seconds: u64,
     pub use_ssh_agent: Option<bool>,
+    pub state_directory: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -64,6 +116,7 @@ impl Default for AppConfig {
             devices: Vec::new(),
             ssh_timeout_seconds: 30,
             use_ssh_agent: None, // Default to using ssh-agent when None
+            state_directory: Some("states".to_string()),
         }
     }
 }
@@ -144,6 +197,59 @@ impl AppConfig {
             Ok(())
         } else {
             Err(format!("Device '{}' not found in configuration", hostname))
+        }
+    }
+
+    pub fn get_state_directory(&self) -> &str {
+        self.state_directory.as_deref().unwrap_or("states")
+    }
+
+    pub fn get_state_file_path(&self, hostname: &str) -> std::path::PathBuf {
+        std::path::Path::new(self.get_state_directory()).join(format!("{}.json", hostname))
+    }
+
+    pub fn load_device_state(
+        &self,
+        hostname: &str,
+    ) -> Result<DeviceState, Box<dyn std::error::Error>> {
+        let state_path = self.get_state_file_path(hostname);
+        let content = fs::read_to_string(state_path)?;
+        let state: DeviceState = serde_json::from_str(&content)?;
+        Ok(state)
+    }
+
+    pub fn save_device_state(
+        &self,
+        hostname: &str,
+        state: &DeviceState,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let state_dir = std::path::Path::new(self.get_state_directory());
+        if !state_dir.exists() {
+            fs::create_dir_all(state_dir)?;
+        }
+
+        let state_path = self.get_state_file_path(hostname);
+        let content = serde_json::to_string_pretty(state)?;
+        fs::write(state_path, content)?;
+        Ok(())
+    }
+
+    pub fn has_state_file(&self, hostname: &str) -> bool {
+        self.get_state_file_path(hostname).exists()
+    }
+
+    pub fn needs_state_update(
+        &self,
+        hostname: &str,
+        raw_config: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        if !self.has_state_file(hostname) {
+            return Ok(true); // No state file, definitely need to create one
+        }
+
+        match self.load_device_state(hostname) {
+            Ok(state) => Ok(state.has_config_changed(raw_config)),
+            Err(_) => Ok(true), // Error loading state, assume we need update
         }
     }
 }

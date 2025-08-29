@@ -6,7 +6,7 @@ pub mod brand;
 pub mod config;
 pub mod ssh;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DeviceType {
     Router,
     Switch,
@@ -45,7 +45,7 @@ pub enum Upstream {
     Gateway(IpAddr),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum InterfaceType {
     Ethernet,
     Vlan,
@@ -87,6 +87,17 @@ pub enum TrailFinderError {
     InvalidLine(String),
 }
 
+impl std::fmt::Display for TrailFinderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TrailFinderError::Parse(msg) => write!(f, "Parse error: {}", msg),
+            TrailFinderError::InvalidLine(msg) => write!(f, "Invalid line: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for TrailFinderError {}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Interface {
     pub name: String,
@@ -111,10 +122,10 @@ pub enum RouteType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Route {
-    route_type: RouteType,
-    interface_id: Option<String>,
-    gateway: Option<IpAddr>,
-    distance: Option<u16>,
+    pub route_type: RouteType,
+    pub interface_id: Option<String>,
+    pub gateway: Option<IpAddr>,
+    pub distance: Option<u16>,
 }
 
 impl Device {

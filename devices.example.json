@@ -1,29 +1,49 @@
 {
-  "devices": {
-    "router01": {
+  "devices": [
+    {
       "hostname": "router01",
       "ip_address": "192.168.1.1",
       "brand": null,
       "device_type": null,
-      "owner": "Named(\"IT Department\")",
+      "owner": {
+        "Named": "IT Department"
+      },
       "ssh_username": null,
       "ssh_port": 22,
       "ssh_key_path": null,
       "last_interrogated": null,
       "notes": "Main gateway router - will use SSH config"
     },
-    "switch01": {
+    {
       "hostname": "switch01",
       "ip_address": "192.168.1.10",
       "brand": "Mikrotik",
       "device_type": "Switch",
-      "owner": "Named(\"Network Team\")",
+      "owner": {
+        "Named": "Network Team"
+      },
       "ssh_username": "admin",
       "ssh_port": 22,
       "ssh_key_path": "~/.ssh/id_ed25519",
       "last_interrogated": "2025-08-29T10:30:00Z",
       "notes": "Core switch - manual SSH config"
+    },
+    {
+      "hostname": "cisco-sw01",
+      "ip_address": "192.168.1.20",
+      "brand": "Cisco",
+      "device_type": "Switch",
+      "owner": {
+        "Named": "Network Team"
+      },
+      "ssh_username": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": "~/.ssh/cisco_key",
+      "ssh_key_passphrase": "secret_passphrase",
+      "last_interrogated": null,
+      "notes": "Cisco access switch with encrypted key"
     }
-  },
-  "ssh_timeout_seconds": 30
+  ],
+  "ssh_timeout_seconds": 30,
+  "state_directory": "states"
 }
