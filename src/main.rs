@@ -8,17 +8,26 @@ use trailfinder::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = "devices.json";
 
-    // Load or create default config
+    // Load config file, only create if it doesn't exist
     let mut app_config = match AppConfig::load_from_file(config_path) {
         Ok(config) => {
             println!("Loaded configuration from {}", config_path);
             config
         }
-        Err(_) => {
-            println!("Creating new configuration file at {}", config_path);
-            let config = AppConfig::default();
-            config.save_to_file(config_path)?;
-            config
+        Err(e) => {
+            // Check if file exists but has errors vs doesn't exist
+            if std::path::Path::new(config_path).exists() {
+                eprintln!("❌ Error loading existing config file '{}': {}", config_path, e);
+                eprintln!("💡 Please check the file for JSON syntax errors or permission issues.");
+                eprintln!("📄 You can validate JSON at: https://jsonlint.com/");
+                return Err(format!("Config file exists but cannot be loaded: {}", e).into());
+            } else {
+                println!("📄 Config file '{}' not found, creating default configuration", config_path);
+                let config = AppConfig::default();
+                config.save_to_file(config_path)?;
+                println!("✅ Created default config at '{}' - please edit it to add your devices", config_path);
+                config
+            }
         }
     };
 
@@ -70,10 +79,18 @@ fn identify_device(
     app_config: &AppConfig,
 ) -> Result<(trailfinder::config::DeviceBrand, trailfinder::DeviceType), Box<dyn std::error::Error>>
 {
-    let socket_addr = SocketAddr::new(
-        device_config.ip_address,
-        device_config.ssh_port.unwrap_or(22),
-    );
+    // Use IP address if provided, otherwise resolve hostname
+    let socket_addr = if let Some(ip) = device_config.ip_address {
+        SocketAddr::new(ip, device_config.ssh_port.get())
+    } else {
+        // Resolve hostname to IP
+        use std::net::ToSocketAddrs;
+        let host_port = format!("{}:{}", device_config.hostname, device_config.ssh_port.get());
+        let mut addrs = host_port.to_socket_addrs()
+            .map_err(|e| format!("Failed to resolve hostname '{}': {}", device_config.hostname, e))?;
+        addrs.next()
+            .ok_or_else(|| format!("No IP address found for hostname '{}'", device_config.hostname))?
+    };
     let timeout = Duration::from_secs(30);
 
     println!("  Connecting via SSH...");

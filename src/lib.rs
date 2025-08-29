@@ -72,7 +72,7 @@ impl From<&str> for InterfaceType {
     fn from(value: &str) -> Self {
         match value {
             "bridge" => InterfaceType::Bridge,
-            "ether" => InterfaceType::Ethernet,
+            "ether" | "ethernet" => InterfaceType::Ethernet,
             "vlan" => InterfaceType::Vlan,
             "loopback" => InterfaceType::Loopback,
             "veth" => InterfaceType::VirtualEthernet, // mikrotik

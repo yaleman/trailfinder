@@ -1,0 +1,32 @@
+# MikroTik Routing Table Test Data
+# Generated from: /ip route print
+# Format: FLAGS DST-ADDRESS GATEWAY DISTANCE
+# Flags: D=Dynamic, A=Active, c=Connect, s=Static, r=RIP, b=BGP, o=OSPF, m=MME, B=Blackhole, U=Unreachable, P=Prohibit
+
+# Default route via ISP gateway
+DAd 0.0.0.0/0           123.123.123.1         1
+
+# Connected networks - directly attached subnets
+DAc 10.0.0.0/24         vlan10                0
+DAc 10.0.5.0/24         vlan20                0
+DAc 10.0.40.0/24        vlan40                0
+DAc 10.0.43.0/24        wg-server             0
+DAc 10.0.99.0/24        vlan99                0
+DAc 10.1.0.0/24         ether2                0
+DAc 159.196.188.0/22    ether1                0
+DAc 192.168.88.0/24     bridge                0
+DAc 192.168.99.1/32     loopback0             0
+
+# Static routes for remote networks
+DAs 172.16.0.0/16       10.0.43.2             10
+DAs 192.168.100.0/24    wg-s2s                5
+DAs 10.10.0.0/16        123.123.123.132       20
+
+# VPN routes via WireGuard
+DAc 10.0.50.0/24        wg-s2s                0
+
+# Management routes
+DAc 172.31.0.0/24       vlan99                0
+
+# Backup route (higher distance)
+DAs 0.0.0.0/0           123.123.123.1         10

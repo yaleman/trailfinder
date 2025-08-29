@@ -1,0 +1,24 @@
+# MikroTik Interface Configuration Test Data
+# Generated from: /interface print
+# This represents a typical RouterOS configuration export
+
+/interface bridge add admin-mac=78:9A:18:FF:88:98 auto-mac=no comment="Default bridge" name=bridge
+/interface bridge add comment="IoT devices bridge" name=bridge-iot protocol-mode=rstp
+/interface ethernet set [ find default-name=ether1 ] comment="WAN Connection" mac-address=78:9A:18:FF:88:99
+/interface ethernet set [ find default-name=ether2 ] comment="LAN Port 1" advertise=100M-baseT-half,100M-baseT-full,1G-baseT-half,1G-baseT-full
+/interface ethernet set [ find default-name=ether3 ] comment="Server Connection"
+/interface ethernet set [ find default-name=ether4 ] comment="Access Point Uplink" disabled=no
+/interface ethernet set [ find default-name=ether5 ] comment="Spare Port" disabled=yes
+/interface ethernet set [ find default-name=sfp-sfpplus1 ] comment="10G Uplink" advertise=1G-baseT-full,1G-baseX,2.5G-baseT,2.5G-baseX,5G-baseT,10G-baseT,10G-baseSR-LR,10G-baseCR l2mtu=9000 loop-protect=off
+/interface veth add address=10.200.200.200/24 gateway=10.200.200.1 gateway6="" name=mDNSveth comment="mDNS reflector interface"
+/interface wireguard add comment="VPN Server" listen-port=51821 mtu=1420 name=wg-server
+/interface wireguard add comment="Site-to-Site VPN" listen-port=51822 mtu=1420 name=wg-s2s
+/interface vlan add comment="WAN VLAN" interface=bridge name=vlan5 vlan-id=5
+/interface vlan add comment="Internal Network" interface=bridge loop-protect=off name=vlan10 vlan-id=10
+/interface vlan add comment="Guest Network" interface=bridge name=vlan20 vlan-id=20
+/interface vlan add comment="Management VLAN" interface=bridge name=vlan99 vlan-id=99
+/interface vlan add comment="Test Network" interface=bridge name=vlan40 vlan-id=40
+/interface vlan add comment="Streaming" disabled=yes interface=bridge name=vlan41 vlan-id=41
+/interface vlan add comment="Voice VLAN" interface=bridge name=vlan100 vlan-id=100
+/interface bridge add comment="DMZ Bridge" name=bridge-dmz
+/interface loopback add comment="Loopback interface" name=loopback0

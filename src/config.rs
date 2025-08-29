@@ -1,8 +1,12 @@
-use std::{collections::HashMap, fs, net::IpAddr, path::Path};
+use std::{collections::HashMap, fs, net::IpAddr, num::NonZeroU16, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{DeviceType, Owner};
+
+fn default_ssh_port() -> NonZeroU16 {
+    NonZeroU16::new(22).expect("22 is a valid non-zero port number")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeviceBrand {
@@ -17,12 +21,13 @@ pub enum DeviceBrand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     pub hostname: String,
-    pub ip_address: IpAddr,
+    pub ip_address: Option<IpAddr>,
     pub brand: Option<DeviceBrand>,
     pub device_type: Option<DeviceType>,
     pub owner: Owner,
     pub ssh_username: Option<String>,
-    pub ssh_port: Option<u16>,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: NonZeroU16,
     pub ssh_key_path: Option<String>,
     pub last_interrogated: Option<String>, // ISO 8601 timestamp
     pub notes: Option<String>,
@@ -32,12 +37,12 @@ impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
             hostname: String::new(),
-            ip_address: "0.0.0.0".parse().unwrap(),
+            ip_address: None,
             brand: None,
             device_type: None,
             owner: Owner::Unknown,
             ssh_username: None,
-            ssh_port: None,
+            ssh_port: default_ssh_port(),
             ssh_key_path: None,
             last_interrogated: None,
             notes: None,
@@ -67,6 +72,29 @@ impl AppConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(path)?;
         let config: AppConfig = serde_json::from_str(&content)?;
+        
+        // Validate that all devices have non-empty hostnames
+        for (hostname, device_config) in &config.devices {
+            if hostname.trim().is_empty() {
+                return Err("Empty hostname found in devices - all hostnames must be non-empty".into());
+            }
+            
+            if device_config.hostname.trim().is_empty() {
+                return Err(format!(
+                    "Device '{}' has empty hostname field - hostname is required", 
+                    hostname
+                ).into());
+            }
+            
+            // Ensure hostname matches the key for consistency
+            if device_config.hostname != *hostname {
+                return Err(format!(
+                    "Device key '{}' does not match hostname field '{}' - they must be identical",
+                    hostname, device_config.hostname
+                ).into());
+            }
+        }
+        
         Ok(config)
     }
 
