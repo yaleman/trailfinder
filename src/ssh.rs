@@ -5,10 +5,10 @@ use std::{
     time::Duration,
 };
 
-use ssh2::Session;
 use ssh_config::SSHConfig;
+use ssh2::Session;
 
-use crate::{config::DeviceBrand, DeviceType};
+use crate::{DeviceType, config::DeviceBrand};
 
 pub struct SshClient {
     session: Session,
@@ -62,7 +62,7 @@ impl SshClient {
         let identity_file = host_config
             .get("IdentityFile")
             .or_else(|| host_config.get("identityfile"));
-        
+
         let identity_files: Vec<PathBuf> = if let Some(id_file) = identity_file {
             vec![if let Some(stripped) = id_file.strip_prefix("~/") {
                 if let Some(home_dir) = dirs::home_dir() {
@@ -77,8 +77,10 @@ impl SshClient {
             Vec::new()
         };
 
-        let key_path = identity_files.first().map(|p| p.to_string_lossy().to_string());
-        
+        let key_path = identity_files
+            .first()
+            .map(|p| p.to_string_lossy().to_string());
+
         Self::connect(
             ip_address,
             username,
@@ -93,15 +95,17 @@ impl SshClient {
         let ssh_config_path = if let Some(home_dir) = dirs::home_dir() {
             home_dir.join(".ssh").join("config")
         } else {
-            return Err(SshError::Connection("Cannot find home directory".to_string()));
+            return Err(SshError::Connection(
+                "Cannot find home directory".to_string(),
+            ));
         };
 
         let config_content = std::fs::read_to_string(&ssh_config_path)
             .map_err(|e| SshError::Connection(format!("Failed to read SSH config: {}", e)))?;
-        
+
         // We need to leak the string to get a static lifetime - this is a limitation of the library
         let leaked_content = Box::leak(config_content.into_boxed_str());
-        
+
         SSHConfig::parse_str(leaked_content)
             .map_err(|e| SshError::Connection(format!("Failed to parse SSH config: {:?}", e)))
     }
@@ -125,7 +129,7 @@ impl SshClient {
 
         // Try authentication methods in order: ssh-agent, key file, password
         let mut authenticated = false;
-        
+
         if use_ssh_agent {
             match session.userauth_agent(username) {
                 Ok(()) => {
@@ -140,10 +144,13 @@ impl SshClient {
             }
         }
 
-        if !authenticated
-            && let Some(key_path) = key_path
-        {
-            match session.userauth_pubkey_file(username, None, std::path::Path::new(&key_path), None) {
+        if !authenticated && let Some(key_path) = key_path {
+            match session.userauth_pubkey_file(
+                username,
+                None,
+                std::path::Path::new(&key_path),
+                None,
+            ) {
                 Ok(()) => {
                     authenticated = session.authenticated();
                     if authenticated {
@@ -156,9 +163,7 @@ impl SshClient {
             }
         }
 
-        if !authenticated
-            && let Some(password) = password
-        {
+        if !authenticated && let Some(password) = password {
             match session.userauth_password(username, password) {
                 Ok(()) => {
                     authenticated = session.authenticated();

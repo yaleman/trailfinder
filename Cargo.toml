@@ -12,3 +12,5 @@ ssh2 = "0.9"
 tokio = { version = "1.0", features = ["full"] }
 ssh_config = "0.1"
 dirs = "5.0"
+shellexpand = { version = "3.1.1", features = ["path"] }
+serde_with = { version = "3.14.0", features = ["chrono", "json"] }

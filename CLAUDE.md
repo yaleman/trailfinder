@@ -87,3 +87,4 @@ The application tries SSH config first, then falls back to manual config if SSH 
 ## Testing Data
 
 The project includes sample MikroTik configuration files that are used in tests. The parser functions expect MikroTik's specific command output format for interfaces and routes.
+- no task is complete unless you can run 'just check' and there's no errors or warnings

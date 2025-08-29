@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, net::IpAddr, num::NonZeroU16, path::Path};
+use std::{fs, net::IpAddr, num::NonZeroU16, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,7 @@ pub enum DeviceBrand {
     Other(String),
 }
 
+#[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     pub hostname: String,
@@ -52,16 +53,15 @@ impl Default for DeviceConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub devices: HashMap<String, DeviceConfig>, // hostname -> config
+    pub devices: Vec<DeviceConfig>,
     pub ssh_timeout_seconds: u64,
-
     pub use_ssh_agent: Option<bool>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            devices: HashMap::new(),
+            devices: Vec::new(),
             ssh_timeout_seconds: 30,
             use_ssh_agent: None, // Default to using ssh-agent when None
         }
@@ -72,29 +72,26 @@ impl AppConfig {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let content = fs::read_to_string(path)?;
         let config: AppConfig = serde_json::from_str(&content)?;
-        
-        // Validate that all devices have non-empty hostnames
-        for (hostname, device_config) in &config.devices {
-            if hostname.trim().is_empty() {
-                return Err("Empty hostname found in devices - all hostnames must be non-empty".into());
-            }
-            
+
+        // Validate that all devices have non-empty hostnames and unique names
+        let mut seen_hostnames = std::collections::HashSet::new();
+        for device_config in &config.devices {
             if device_config.hostname.trim().is_empty() {
-                return Err(format!(
-                    "Device '{}' has empty hostname field - hostname is required", 
-                    hostname
-                ).into());
+                return Err(
+                    "Device has empty hostname - hostname is required for all devices".into(),
+                );
             }
-            
-            // Ensure hostname matches the key for consistency
-            if device_config.hostname != *hostname {
+
+            // Check for duplicate hostnames
+            if !seen_hostnames.insert(device_config.hostname.clone()) {
                 return Err(format!(
-                    "Device key '{}' does not match hostname field '{}' - they must be identical",
-                    hostname, device_config.hostname
-                ).into());
+                    "Duplicate hostname '{}' found - all device hostnames must be unique",
+                    device_config.hostname
+                )
+                .into());
             }
         }
-        
+
         Ok(config)
     }
 
@@ -104,16 +101,20 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn add_device(&mut self, hostname: String, device: DeviceConfig) {
-        self.devices.insert(hostname, device);
+    pub fn add_device(&mut self, device: DeviceConfig) {
+        self.devices.push(device);
     }
 
     pub fn get_device(&self, hostname: &str) -> Option<&DeviceConfig> {
-        self.devices.get(hostname)
+        self.devices
+            .iter()
+            .find(|device| device.hostname == hostname)
     }
 
     pub fn get_device_mut(&mut self, hostname: &str) -> Option<&mut DeviceConfig> {
-        self.devices.get_mut(hostname)
+        self.devices
+            .iter_mut()
+            .find(|device| device.hostname == hostname)
     }
 
     pub fn needs_identification(&self, hostname: &str) -> bool {

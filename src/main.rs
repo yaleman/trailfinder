@@ -17,15 +17,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             // Check if file exists but has errors vs doesn't exist
             if std::path::Path::new(config_path).exists() {
-                eprintln!("❌ Error loading existing config file '{}': {}", config_path, e);
+                eprintln!(
+                    "❌ Error loading existing config file '{}': {}",
+                    config_path, e
+                );
                 eprintln!("💡 Please check the file for JSON syntax errors or permission issues.");
                 eprintln!("📄 You can validate JSON at: https://jsonlint.com/");
                 return Err(format!("Config file exists but cannot be loaded: {}", e).into());
             } else {
-                println!("📄 Config file '{}' not found, creating default configuration", config_path);
+                println!(
+                    "📄 Config file '{}' not found, creating default configuration",
+                    config_path
+                );
                 let config = AppConfig::default();
                 config.save_to_file(config_path)?;
-                println!("✅ Created default config at '{}' - please edit it to add your devices", config_path);
+                println!(
+                    "✅ Created default config at '{}' - please edit it to add your devices",
+                    config_path
+                );
                 config
             }
         }
@@ -39,9 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Process devices that need identification
     let devices_to_identify: Vec<String> = app_config
         .devices
-        .keys()
-        .filter(|hostname| app_config.needs_identification(hostname))
-        .cloned()
+        .iter()
+        .filter(|device| app_config.needs_identification(&device.hostname))
+        .map(|device| device.hostname.clone())
         .collect();
 
     if devices_to_identify.is_empty() {
@@ -85,11 +94,23 @@ fn identify_device(
     } else {
         // Resolve hostname to IP
         use std::net::ToSocketAddrs;
-        let host_port = format!("{}:{}", device_config.hostname, device_config.ssh_port.get());
-        let mut addrs = host_port.to_socket_addrs()
-            .map_err(|e| format!("Failed to resolve hostname '{}': {}", device_config.hostname, e))?;
-        addrs.next()
-            .ok_or_else(|| format!("No IP address found for hostname '{}'", device_config.hostname))?
+        let host_port = format!(
+            "{}:{}",
+            device_config.hostname,
+            device_config.ssh_port.get()
+        );
+        let mut addrs = host_port.to_socket_addrs().map_err(|e| {
+            format!(
+                "Failed to resolve hostname '{}': {}",
+                device_config.hostname, e
+            )
+        })?;
+        addrs.next().ok_or_else(|| {
+            format!(
+                "No IP address found for hostname '{}'",
+                device_config.hostname
+            )
+        })?
     };
     let timeout = Duration::from_secs(30);
 
@@ -111,13 +132,16 @@ fn identify_device(
                     .ok_or("No SSH username configured")?;
 
                 let password = std::env::var("SSH_PASSWORD").ok();
-                let key_path = device_config.ssh_key_path.as_deref();
+                let key_path = device_config
+                    .ssh_key_path
+                    .as_deref()
+                    .map(shellexpand::tilde);
 
                 SshClient::connect(
                     socket_addr,
                     username,
                     password.as_deref(),
-                    key_path,
+                    key_path.as_deref(),
                     app_config.use_ssh_agent.unwrap_or(true), // Default to true
                     timeout,
                 )?
