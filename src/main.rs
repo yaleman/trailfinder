@@ -26,7 +26,8 @@ struct Cli {
     config_path: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let cli = Cli::parse();
 
@@ -105,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Processing device: {}", hostname);
 
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_and_interrogate_device(&device_config, &app_config) {
+            match identify_and_interrogate_device(&device_config, &app_config).await {
                 Ok((brand, device_type, device_state)) => {
                     info!("Identified as {:?} {:?}", brand, device_type);
                     app_config.update_device_identification(&hostname, brand, device_type)?;
@@ -130,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn identify_and_interrogate_device(
+async fn identify_and_interrogate_device(
     device_config: &DeviceConfig,
     app_config: &AppConfig,
 ) -> Result<(DeviceBrand, DeviceType, DeviceState), Box<dyn std::error::Error>> {
@@ -164,7 +165,9 @@ fn identify_and_interrogate_device(
 
     // Try SSH config first, then fall back to manual config
     let mut ssh_client =
-        match SshClient::connect_with_ssh_config(&device_config.hostname, socket_addr, timeout) {
+        match SshClient::connect_with_ssh_config(&device_config.hostname, socket_addr, timeout)
+            .await
+        {
             Ok(client) => {
                 debug!("Connected using SSH config");
                 client
@@ -198,21 +201,22 @@ fn identify_and_interrogate_device(
                     key_passphrase,
                     app_config.use_ssh_agent.unwrap_or(true), // Default to true
                     timeout,
-                )?
+                )
+                .await?
             }
         };
 
-    let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client)?;
+    let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client).await?;
 
     info!("Interrogating device configuration... for brand {brand}");
 
     // Interrogate device based on brand
     let device_state = match brand {
         DeviceBrand::Mikrotik => {
-            interrogate_mikrotik_device(&mut ssh_client, device_config, device_type)?
+            interrogate_mikrotik_device(&mut ssh_client, device_config, device_type).await?
         }
         DeviceBrand::Cisco => {
-            interrogate_cisco_device(&mut ssh_client, device_config, device_type)?
+            interrogate_cisco_device(&mut ssh_client, device_config, device_type).await?
         }
         _ => {
             return Err(format!("Interrogation not supported for brand {:?}", brand).into());
@@ -222,16 +226,16 @@ fn identify_and_interrogate_device(
     Ok((brand, device_type, device_state))
 }
 
-fn interrogate_mikrotik_device(
+async fn interrogate_mikrotik_device(
     ssh_client: &mut SshClient,
     device_config: &DeviceConfig,
     device_type: DeviceType,
 ) -> Result<DeviceState, Box<dyn std::error::Error>> {
     debug!("Fetching MikroTik interfaces...");
-    let interfaces_output = ssh_client.execute_command("/interface print")?;
+    let interfaces_output = ssh_client.execute_command("/interface print").await?;
 
     debug!("Fetching MikroTik routes...");
-    let routes_output = ssh_client.execute_command("/ip route print")?;
+    let routes_output = ssh_client.execute_command("/ip route print").await?;
 
     // Combine outputs for hash calculation
     let raw_config = format!("{}\n{}", interfaces_output, routes_output);
@@ -258,16 +262,16 @@ fn interrogate_mikrotik_device(
     Ok(device_state)
 }
 
-fn interrogate_cisco_device(
+async fn interrogate_cisco_device(
     ssh_client: &mut SshClient,
     device_config: &DeviceConfig,
     device_type: DeviceType,
 ) -> Result<DeviceState, Box<dyn std::error::Error>> {
     debug!("Fetching Cisco interfaces...");
-    let interfaces_output = ssh_client.execute_command("show interfaces")?;
+    let interfaces_output = ssh_client.execute_command("show interfaces").await?;
 
     debug!("Fetching Cisco routes...");
-    let routes_output = ssh_client.execute_command("show ip route")?;
+    let routes_output = ssh_client.execute_command("show ip route").await?;
 
     // Combine outputs for hash calculation
     let raw_config = format!("{}\n{}", interfaces_output, routes_output);

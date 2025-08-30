@@ -1,12 +1,9 @@
-use std::{
-    io::{Read, Write},
-    net::{SocketAddr, TcpStream},
-    path::PathBuf,
-    time::Duration,
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+
+use russh::{client, keys::ssh_key};
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg};
 
 use ssh_config::SSHConfig;
-use ssh2::Session;
 use tracing::debug;
 
 use crate::{DeviceType, config::DeviceBrand};
@@ -31,6 +28,7 @@ pub struct SshConnectionInfo {
 
 pub struct SshClient {
     connection_info: SshConnectionInfo,
+    session: Option<client::Handle<ClientHandler>>,
 }
 
 #[derive(Debug)]
@@ -54,8 +52,22 @@ impl std::fmt::Display for SshError {
 
 impl std::error::Error for SshError {}
 
+// Handler for russh client
+#[derive(Clone)]
+struct ClientHandler;
+
+impl client::Handler for ClientHandler {
+    type Error = russh::Error;
+    #[allow(unused_variables)]
+    fn check_server_key(
+        &mut self,
+        server_public_key: &ssh_key::PublicKey,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+        async { Ok(true) }
+    }
+}
 impl SshClient {
-    pub fn connect_with_ssh_config(
+    pub async fn connect_with_ssh_config(
         hostname: &str,
         ip_address: SocketAddr,
         timeout: Duration,
@@ -109,6 +121,7 @@ impl SshClient {
             use_ssh_agent,
             timeout,
         )
+        .await
     }
 
     fn load_ssh_config() -> Result<SSHConfig<'static>, SshError> {
@@ -129,7 +142,7 @@ impl SshClient {
             .map_err(|e| SshError::Connection(format!("Failed to parse SSH config: {:?}", e)))
     }
 
-    pub fn connect(
+    pub async fn connect(
         address: SocketAddr,
         username: &str,
         password: Option<&str>,
@@ -141,7 +154,9 @@ impl SshClient {
         let mut client = Self::new(address, username.to_string(), timeout);
 
         // Attempt authentication to find working method
-        client.discover_auth_method(password, key_path, key_passphrase, use_ssh_agent)?;
+        client
+            .discover_auth_method(password, key_path, key_passphrase, use_ssh_agent)
+            .await?;
 
         Ok(client)
     }
@@ -154,48 +169,43 @@ impl SshClient {
                 timeout,
                 successful_auth: None,
             },
+            session: None,
         }
     }
 
-    fn create_session(&self) -> Result<Session, SshError> {
-        let tcp =
-            TcpStream::connect_timeout(&self.connection_info.address, self.connection_info.timeout)
-                .map_err(|e| SshError::Connection(e.to_string()))?;
+    async fn create_session(&self) -> Result<client::Handle<ClientHandler>, SshError> {
+        let mut config = client::Config::default();
+        
+        // Add legacy algorithms for compatibility with older Cisco devices
+        config.preferred.kex = vec![
+            // Modern algorithms first
+            russh::kex::CURVE25519,
+            russh::kex::DH_G14_SHA256,
+            russh::kex::DH_G16_SHA512,
+            // Legacy algorithms for Cisco compatibility
+            russh::kex::ECDH_SHA2_NISTP256,
+            russh::kex::ECDH_SHA2_NISTP384, 
+            russh::kex::ECDH_SHA2_NISTP521,
+            russh::kex::DH_G14_SHA1,
+        ].into();
 
-        let mut session = Session::new().map_err(|e| SshError::Connection(e.to_string()))?;
-        session.set_tcp_stream(tcp);
+        let handler = ClientHandler;
 
-        // Configure SSH methods to support legacy RSA algorithms
-        session
-            .method_pref(
-                ssh2::MethodType::HostKey,
-                "rsa-sha2-512,rsa-sha2-256,ssh-rsa",
-            )
-            .map_err(|e| {
-                debug!("Failed to set hostkey methods: {}", e);
-            })
-            .ok();
-
-        session.method_pref(ssh2::MethodType::Kex, "diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,diffie-hellman-group1-sha1")
-            .map_err(|e| {
-                debug!("Failed to set key exchange methods: {}", e);
-            }).ok();
-
-        session
-            .handshake()
+        let session = client::connect(Arc::new(config), &self.connection_info.address, handler)
+            .await
             .map_err(|e| SshError::Connection(e.to_string()))?;
 
         Ok(session)
     }
 
-    fn discover_auth_method(
+    async fn discover_auth_method(
         &mut self,
         password: Option<&str>,
         key_path: Option<&str>,
         key_passphrase: Option<&str>,
         use_ssh_agent: bool,
     ) -> Result<(), SshError> {
-        let session = self.create_session()?;
+        let mut session = self.create_session().await?;
 
         let auth_methods = vec![
             if use_ssh_agent {
@@ -222,8 +232,12 @@ impl SshClient {
         .collect::<Vec<_>>();
 
         for auth_method in auth_methods {
-            if self.authenticate_session(&session, &auth_method)? {
+            if self
+                .authenticate_session(&mut session, &auth_method)
+                .await?
+            {
                 self.connection_info.successful_auth = Some(auth_method);
+                self.session = Some(session);
                 return Ok(());
             }
         }
@@ -233,28 +247,20 @@ impl SshClient {
         ))
     }
 
-    fn authenticate_session(
+    async fn authenticate_session(
         &self,
-        session: &Session,
+        session: &mut client::Handle<ClientHandler>,
         auth_method: &AuthMethod,
     ) -> Result<bool, SshError> {
         match auth_method {
-            AuthMethod::SshAgent => match session.userauth_agent(&self.connection_info.username) {
-                Ok(()) => {
-                    let authenticated = session.authenticated();
-                    if authenticated {
-                        debug!("✅ Authenticated via ssh-agent");
-                    } else {
-                        debug!("ssh-agent authentication succeeded but session not authenticated");
-                    }
-                    Ok(authenticated)
-                }
-                Err(e) => {
-                    debug!("ssh-agent authentication failed: {}", e);
-                    Ok(false)
-                }
-            },
-            AuthMethod::KeyFile { path, passphrase } => {
+            AuthMethod::SshAgent => {
+                debug!("SSH agent authentication not yet implemented in russh migration");
+                Ok(false)
+            }
+            AuthMethod::KeyFile {
+                path,
+                passphrase,
+            } => {
                 let expanded_path = shellexpand::tilde(path);
                 let key_path_buf = std::path::Path::new(expanded_path.as_ref());
 
@@ -263,45 +269,76 @@ impl SshClient {
                     return Ok(false);
                 }
 
-                match session.userauth_pubkey_file(
-                    &self.connection_info.username,
-                    None,
-                    key_path_buf,
-                    passphrase.as_deref(),
-                ) {
-                    Ok(()) => {
-                        let authenticated = session.authenticated();
-                        if authenticated {
+                debug!("Attempting key file authentication: {}", expanded_path);
+
+                // Load the private key
+                let key_data = match std::fs::read_to_string(key_path_buf) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        debug!("Failed to read key file {}: {}", expanded_path, e);
+                        return Ok(false);
+                    }
+                };
+
+                let private_key = match passphrase {
+                    Some(phrase) => {
+                        match PrivateKey::from_openssh(&key_data).and_then(|k| k.decrypt(phrase)) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                debug!("Failed to decrypt key with passphrase: {}", e);
+                                return Ok(false);
+                            }
+                        }
+                    }
+                    None => {
+                        match PrivateKey::from_openssh(&key_data) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                debug!("Failed to load unencrypted key: {}", e);
+                                return Ok(false);
+                            }
+                        }
+                    }
+                };
+
+                // Convert to PrivateKeyWithHashAlg for authentication
+                let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(private_key), None);
+
+                match session
+                    .authenticate_publickey(&self.connection_info.username, key_with_hash)
+                    .await
+                {
+                    Ok(result) => {
+                        let success = matches!(result, russh::client::AuthResult::Success);
+                        if success {
                             debug!("✅ Authenticated via key file: {}", expanded_path);
                         } else {
-                            debug!(
-                                "Key file authentication succeeded but session not authenticated: {}",
-                                expanded_path
-                            );
+                            debug!("Key file authentication failed: {}", expanded_path);
                         }
-                        Ok(authenticated)
+                        Ok(success)
                     }
                     Err(e) => {
-                        debug!("Key file authentication failed: {}", e);
+                        debug!("Key file authentication error: {}", e);
                         Ok(false)
                     }
                 }
             }
             AuthMethod::Password(password) => {
-                match session.userauth_password(&self.connection_info.username, password) {
-                    Ok(()) => {
-                        let authenticated = session.authenticated();
-                        if authenticated {
+                match session
+                    .authenticate_password(&self.connection_info.username, password)
+                    .await
+                {
+                    Ok(result) => {
+                        let success = matches!(result, russh::client::AuthResult::Success);
+                        if success {
                             debug!("✅ Authenticated via password");
                         } else {
-                            debug!(
-                                "Password authentication succeeded but session not authenticated"
-                            );
+                            debug!("Password authentication failed");
                         }
-                        Ok(authenticated)
+                        Ok(success)
                     }
                     Err(e) => {
-                        debug!("Password authentication failed: {}", e);
+                        debug!("Password authentication error: {}", e);
                         Ok(false)
                     }
                 }
@@ -309,115 +346,95 @@ impl SshClient {
         }
     }
 
-    pub fn execute_command(&mut self, command: &str) -> Result<String, SshError> {
+    pub async fn execute_command(&mut self, command: &str) -> Result<String, SshError> {
         debug!("Executing command: {}", command);
 
-        // Create a fresh session for this command
-        let session = self.create_session()?;
-        session.trace(ssh2::TraceFlags::all());
-
-        // Re-authenticate using the cached successful method
-        if let Some(auth_method) = &self.connection_info.successful_auth.clone() {
-            if !self.authenticate_session(&session, auth_method)? {
-                return Err(SshError::Authentication(
-                    "Cached authentication method failed".to_string(),
-                ));
+        // Get the session or create a new one if needed
+        let session = match &self.session {
+            Some(_) => {
+                // For simplicity, create a new session each time for now
+                let mut session = self.create_session().await?;
+                if let Some(auth_method) = &self.connection_info.successful_auth.clone() {
+                    if !self.authenticate_session(&mut session, auth_method).await? {
+                        return Err(SshError::Authentication(
+                            "Cached authentication method failed".to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(SshError::Authentication(
+                        "No successful authentication method cached".to_string(),
+                    ));
+                }
+                session
             }
-            // Give the session a moment to fully establish
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        } else {
-            return Err(SshError::Authentication(
-                "No successful authentication method cached".to_string(),
-            ));
-        }
+            None => {
+                return Err(SshError::Authentication("No session available".to_string()));
+            }
+        };
 
-        debug!("Creating channel session for command: {}", command);
-        let mut channel = session.channel_session().map_err(|e| {
-            debug!("Failed to create channel session: {}", e);
-            SshError::Command(format!("Failed to create channel session: {}", e))
+        debug!("Creating channel for command: {}", command);
+        let mut channel = session.channel_open_session().await.map_err(|e| {
+            debug!("Failed to create channel: {}", e);
+            SshError::Command(format!("Failed to create channel: {}", e))
         })?;
 
         debug!("Executing command on channel: {}", command);
-        channel.exec(command).map_err(|e| {
+        channel.exec(true, command).await.map_err(|e| {
             debug!("Failed to execute command '{}': {}", command, e);
             SshError::Command(format!("Failed to execute '{}': {}", command, e))
         })?;
 
-        // Give the command a moment to execute before reading
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        channel.flush().map_err(|err| {
-            debug!("Failed to flush channel: {}", err);
-            SshError::Command(format!("Failed to flush channel: {}", err))
-        })?;
-
-        debug!("Reading command output for: {}", command);
-
-        // Wait for command output with timeout
+        // Read output
         let mut stdout_buffer = Vec::new();
         let mut stderr_buffer = Vec::new();
-        let timeout = std::time::Duration::from_secs(5); // Use 5 second timeout for identification
-        let start_time = std::time::Instant::now();
 
-        debug!("Waiting up to {:?} for command output", timeout);
+        // Use a timeout for reading
+        let timeout_duration = Duration::from_secs(5);
 
-        // Poll for data with timeout
-        while start_time.elapsed() < timeout {
-            // Try to read stderr
-            let mut temp_stderr = Vec::new();
-            match channel.stderr().read_to_end(&mut temp_stderr) {
-                Ok(bytes_read) => {
-                    if bytes_read > 0 {
-                        stderr_buffer.extend_from_slice(&temp_stderr);
-                        debug!(
-                            "Read {} bytes from stderr (total: {})",
-                            bytes_read,
-                            stderr_buffer.len()
-                        );
+        match tokio::time::timeout(timeout_duration, async {
+            loop {
+                tokio::select! {
+                    // Read from stdout
+                    data = channel.wait() => {
+                        match data {
+                            Some(russh::ChannelMsg::Data { data }) => {
+                                stdout_buffer.extend_from_slice(&data);
+                                debug!("Read {} bytes from stdout (total: {})", data.len(), stdout_buffer.len());
+                            }
+                            Some(russh::ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                                stderr_buffer.extend_from_slice(&data);
+                                debug!("Read {} bytes from stderr (total: {})", data.len(), stderr_buffer.len());
+                            }
+                            Some(russh::ChannelMsg::Eof) => {
+                                debug!("Received EOF");
+                                break;
+                            }
+                            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                                debug!("Command exited with status: {}", exit_status);
+                                break;
+                            }
+                            Some(russh::ChannelMsg::Close) => {
+                                debug!("Channel closed");
+                                break;
+                            }
+                            Some(other) => {
+                                debug!("Received other channel message: {:?}", other);
+                            }
+                            None => {
+                                debug!("No more channel messages");
+                                break;
+                            }
+                        }
                     }
                 }
-                Err(e) => {
-                    debug!("Stderr read attempt: {}", e);
-                }
             }
-
-            // Try to read stdout
-            let mut temp_stdout = Vec::new();
-            match channel.read_to_end(&mut temp_stdout) {
-                Ok(bytes_read) => {
-                    if bytes_read > 0 {
-                        stdout_buffer.extend_from_slice(&temp_stdout);
-                        debug!(
-                            "Read {} bytes from stdout (total: {})",
-                            bytes_read,
-                            stdout_buffer.len()
-                        );
-                    }
-                    // If we got data, we might be done
-                    if bytes_read > 0 || (!stdout_buffer.is_empty() && channel.eof()) {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    debug!("Stdout read attempt: {}", e);
-                }
+        }).await {
+            Ok(_) => {}
+            Err(_) => {
+                debug!("Command execution timed out after {:?}", timeout_duration);
+                return Err(SshError::Timeout);
             }
-
-            // If we have data from either stream, check if channel is done
-            if !stdout_buffer.is_empty() || !stderr_buffer.is_empty() {
-                debug!("Got data and channel EOF, breaking");
-                break;
-            }
-
-            // Small delay to avoid busy waiting
-            std::thread::sleep(std::time::Duration::from_millis(50));
         }
-
-        debug!(
-            "Finished reading after {:?} - stdout: {} bytes, stderr: {} bytes",
-            start_time.elapsed(),
-            stdout_buffer.len(),
-            stderr_buffer.len()
-        );
 
         let output = match String::from_utf8(stdout_buffer) {
             Ok(s) => s,
@@ -435,17 +452,6 @@ impl SshClient {
             }
         };
 
-        debug!("Waiting for channel close");
-        match channel.wait_close() {
-            Ok(_) => {
-                debug!("Channel closed successfully");
-            }
-            Err(e) => {
-                debug!("Error waiting for channel close: {}", e);
-                // Don't fail on close error if we got output
-            }
-        }
-
         debug!(
             "Command '{}' completed with {} bytes output",
             command,
@@ -458,34 +464,11 @@ impl SshClient {
 pub struct DeviceIdentifier;
 
 impl DeviceIdentifier {
-    pub fn identify_device(
+    pub async fn identify_device(
         ssh_client: &mut SshClient,
     ) -> Result<(DeviceBrand, DeviceType), SshError> {
-        // First try basic commands to see if the device responds at all
-        // let basic_commands = ["echo test", "whoami", "pwd", "uname -a"];
-        // for cmd in basic_commands {
-        //     match ssh_client.execute_command(cmd) {
-        //         Ok(output) => {
-        //             debug!(
-        //                 "Command '{}' succeeded with output: '{}'",
-        //                 cmd,
-        //                 output.trim()
-        //             );
-        //             // Check if this is a Cisco IOS device based on shell disabled message
-        //             if output.contains("IOS.sh") || output.contains("shell is currently disabled") {
-        //                 debug!("Detected Cisco IOS device from basic command '{}'", cmd);
-        //                 return Ok((DeviceBrand::Cisco, DeviceType::Switch));
-        //             }
-        //             break;
-        //         }
-        //         Err(e) => {
-        //             debug!("Command '{}' failed: {}", cmd, e);
-        //         }
-        //     }
-        // }
-
         // Try to identify MikroTik first
-        match ssh_client.execute_command("/system health print") {
+        match ssh_client.execute_command("/system health print").await {
             Ok(output) => {
                 debug!("MikroTik command output: '{}'", output.trim());
                 if output.contains("MikroTik") || output.contains("RouterOS") {
@@ -508,7 +491,7 @@ impl DeviceIdentifier {
         }
 
         // Try to identify Cisco with show version command
-        match ssh_client.execute_command("show version") {
+        match ssh_client.execute_command("show version").await {
             Ok(output) => {
                 debug!("Cisco command 'show version' output: '{}'", output.trim());
                 if output.to_lowercase().contains("cisco")
@@ -527,19 +510,6 @@ impl DeviceIdentifier {
                 debug!("Cisco command 'show version' failed: {}", e);
             }
         }
-
-        // // Try to identify Ubiquiti
-        // match ssh_client.execute_command("mca-cli") {
-        //     Ok(output) => {
-        //         debug!("Ubiquiti command output: '{}'", output.trim());
-        //         if output.contains("UniFi") || output.contains("Ubiquiti") {
-        //             return Ok((DeviceBrand::Ubiquiti, DeviceType::AccessPoint));
-        //         }
-        //     }
-        //     Err(e) => {
-        //         debug!("Ubiquiti identification failed: {}", e);
-        //     }
-        // }
 
         debug!("No device identification successful, defaulting to Unknown");
         Ok((DeviceBrand::Unknown, DeviceType::Router))
