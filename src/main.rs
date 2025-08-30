@@ -35,6 +35,12 @@ enum Commands {
     Identify {
         /// Specific hostname to identify and add to config if not present
         hostname: Option<String>,
+        /// SSH username to use for connection
+        #[arg(short, long)]
+        username: Option<String>,
+        /// SSH key file path to use for authentication
+        #[arg(short, long)]
+        keyfile: Option<String>,
     },
     /// Update device state from live devices, forcing fresh data collection
     Update {
@@ -105,9 +111,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Handle different commands
-    match cli.command.unwrap_or(Commands::Identify { hostname: None }) {
-        Commands::Identify { hostname } => {
-            identify_command(&mut app_config, config_path, hostname).await?;
+    match cli.command.unwrap_or(Commands::Identify { hostname: None, username: None, keyfile: None }) {
+        Commands::Identify { hostname, username, keyfile } => {
+            identify_command(&mut app_config, config_path, hostname, username, keyfile).await?;
         }
         Commands::Update { devices } => {
             update_command(&mut app_config, config_path, devices).await?;
@@ -121,22 +127,19 @@ async fn identify_command(
     app_config: &mut AppConfig,
     config_path: &str,
     target_hostname: Option<String>,
+    username: Option<String>,
+    keyfile: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let devices_to_identify: Vec<String> = if let Some(hostname) = target_hostname {
+    let (devices_to_identify, new_device_hostname): (Vec<String>, Option<String>) = if let Some(hostname) = target_hostname {
         // If a specific hostname is provided, check if it exists in config
         if app_config.get_device(&hostname).is_none() {
-            info!("Device '{}' not found in config, adding it", hostname);
-            
-            // Create a default device config for the new hostname
-            let mut new_device = DeviceConfig::default();
-            new_device.hostname = hostname.clone();
-            
-            app_config.add_device(new_device);
-            info!("Added '{}' to configuration", hostname);
+            info!("Device '{}' not found in config, will add after successful identification", hostname);
+            // Don't add to config yet - wait for successful identification
+            (vec![hostname.clone()], Some(hostname))
+        } else {
+            // Device exists in config, process normally
+            (vec![hostname], None)
         }
-        
-        // Always process the target hostname
-        vec![hostname]
     } else {
         // Process devices that need identification
         let devices: Vec<String> = app_config
@@ -151,7 +154,7 @@ async fn identify_command(
             return Ok(());
         }
         
-        devices
+        (devices, None)
     };
 
     info!("Identifying {} device(s)...", devices_to_identify.len());
@@ -159,20 +162,55 @@ async fn identify_command(
     for hostname in devices_to_identify {
         info!("Processing device: {}", hostname);
 
-        if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_and_interrogate_device(&device_config, app_config).await {
-                Ok((brand, device_type, device_state)) => {
-                    info!("Identified as {:?} {:?}", brand, device_type);
-                    app_config.update_device_identification(&hostname, brand, device_type)?;
+        // For new devices, create a temporary config for identification
+        let mut device_config = if let Some(ref new_hostname) = new_device_hostname {
+            if hostname == *new_hostname {
+                // Create temporary device config for identification
+                let mut temp_config = DeviceConfig::default();
+                temp_config.hostname = hostname.clone();
+                temp_config
+            } else {
+                app_config.get_device(&hostname).cloned().unwrap()
+            }
+        } else {
+            app_config.get_device(&hostname).cloned().unwrap()
+        };
 
-                    // Save device state
-                    match app_config.save_device_state(&hostname, &device_state) {
-                        Ok(()) => info!("Device state saved successfully"),
-                        Err(e) => warn!("Failed to save device state: {}", e),
+        // Apply CLI-provided SSH parameters (override config values)
+        if let Some(ref cli_username) = username {
+            device_config.ssh_username = Some(cli_username.clone());
+        }
+        if let Some(ref cli_keyfile) = keyfile {
+            device_config.ssh_key_path = Some(cli_keyfile.clone());
+        }
+
+        match identify_and_interrogate_device(&device_config, app_config).await {
+            Ok((brand, device_type, device_state)) => {
+                info!("Identified as {:?} {:?}", brand, device_type);
+                
+                // If this is a new device, add it to config now that identification succeeded
+                if let Some(ref new_hostname) = new_device_hostname {
+                    if hostname == *new_hostname {
+                        info!("Adding '{}' to configuration after successful identification", hostname);
+                        app_config.add_device(device_config);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to identify/interrogate {}: {}", hostname, e);
+                
+                app_config.update_device_identification(&hostname, brand, device_type)?;
+
+                // Save device state
+                match app_config.save_device_state(&hostname, &device_state) {
+                    Ok(()) => info!("Device state saved successfully"),
+                    Err(e) => warn!("Failed to save device state: {}", e),
+                }
+            }
+            Err(e) => {
+                error!("Failed to identify/interrogate {}: {}", hostname, e);
+                // If this was a new device that failed identification, don't add it to config
+                if let Some(ref new_hostname) = new_device_hostname {
+                    if hostname == *new_hostname {
+                        info!("Not adding '{}' to configuration due to identification failure", hostname);
+                    }
                 }
             }
         }
