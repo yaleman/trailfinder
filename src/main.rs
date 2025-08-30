@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::{IpAddr, SocketAddr}, time::Duration};
 
 use clap::{Parser, Subcommand};
 use tracing::{debug, error, info, warn};
@@ -41,6 +41,9 @@ enum Commands {
         /// SSH key file path to use for authentication
         #[arg(short, long)]
         keyfile: Option<String>,
+        /// IP address to use for connection
+        #[arg(short, long)]
+        ip_address: Option<String>,
     },
     /// Update device state from live devices, forcing fresh data collection
     Update {
@@ -111,9 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Handle different commands
-    match cli.command.unwrap_or(Commands::Identify { hostname: None, username: None, keyfile: None }) {
-        Commands::Identify { hostname, username, keyfile } => {
-            identify_command(&mut app_config, config_path, hostname, username, keyfile).await?;
+    match cli.command.unwrap_or(Commands::Identify { hostname: None, username: None, keyfile: None, ip_address: None }) {
+        Commands::Identify { hostname, username, keyfile, ip_address } => {
+            identify_command(&mut app_config, config_path, hostname, username, keyfile, ip_address).await?;
         }
         Commands::Update { devices } => {
             update_command(&mut app_config, config_path, devices).await?;
@@ -129,6 +132,7 @@ async fn identify_command(
     target_hostname: Option<String>,
     username: Option<String>,
     keyfile: Option<String>,
+    ip_address: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (devices_to_identify, new_device_hostname): (Vec<String>, Option<String>) = if let Some(hostname) = target_hostname {
         // If a specific hostname is provided, check if it exists in config
@@ -182,6 +186,16 @@ async fn identify_command(
         }
         if let Some(ref cli_keyfile) = keyfile {
             device_config.ssh_key_path = Some(cli_keyfile.clone());
+        }
+        if let Some(ref cli_ip_address) = ip_address {
+            match cli_ip_address.parse::<IpAddr>() {
+                Ok(ip) => {
+                    device_config.ip_address = Some(ip);
+                }
+                Err(e) => {
+                    return Err(format!("Invalid IP address '{}': {}", cli_ip_address, e).into());
+                }
+            }
         }
 
         match identify_and_interrogate_device(&device_config, app_config).await {
