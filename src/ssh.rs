@@ -568,6 +568,8 @@ impl DeviceIdentifier {
                         Ok(board_output) => {
                             debug!("MikroTik board info: '{}'", board_output.trim());
                             if board_output.contains("CCR")
+                                || board_output.contains("hAP")
+                                || board_output.contains("hAP")
                                 || board_output.contains("Cloud Core Router")
                             {
                                 DeviceType::Router
@@ -575,8 +577,7 @@ impl DeviceIdentifier {
                                 || board_output.contains("Cloud Router Switch")
                             {
                                 DeviceType::Switch
-                            } else if board_output.contains("hAP")
-                                || board_output.contains("SXT")
+                            } else if board_output.contains("SXT")
                                 || board_output.contains("cAP")
                                 || board_output.contains("wAP")
                             {
