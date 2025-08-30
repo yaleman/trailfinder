@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, time::Duration};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -18,12 +18,29 @@ use trailfinder::{
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Enable debug logging (shows detailed SSH authentication and parsing information)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     debug: bool,
 
     /// Path to devices configuration file
-    #[arg(short = 'c', long = "config", default_value = "devices.json")]
+    #[arg(short = 'c', long = "config", default_value = "devices.json", global = true)]
     config_path: String,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Identify new devices that haven't been processed yet (default behavior)
+    Identify,
+    /// Update device state from live devices, forcing fresh data collection
+    Update {
+        /// Specific device hostnames to update (updates all if none specified)
+        devices: Vec<String>,
+        /// Force update even if recently updated
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[tokio::main]
@@ -87,6 +104,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app_config.devices.len()
     );
 
+    // Handle different commands
+    match cli.command.unwrap_or(Commands::Identify) {
+        Commands::Identify => {
+            identify_command(&mut app_config, config_path).await?;
+        }
+        Commands::Update { devices, force } => {
+            update_command(&mut app_config, config_path, devices, force).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn identify_command(
+    app_config: &mut AppConfig,
+    config_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Process devices that need identification
     let devices_to_identify: Vec<String> = app_config
         .devices
@@ -106,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Processing device: {}", hostname);
 
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_and_interrogate_device(&device_config, &app_config).await {
+            match identify_and_interrogate_device(&device_config, app_config).await {
                 Ok((brand, device_type, device_state)) => {
                     info!("Identified as {:?} {:?}", brand, device_type);
                     app_config.update_device_identification(&hostname, brand, device_type)?;
@@ -119,6 +153,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(e) => {
                     error!("Failed to identify/interrogate {}: {}", hostname, e);
+                }
+            }
+        }
+    }
+
+    // Save updated configuration
+    app_config.save_to_file(config_path)?;
+    info!("Updated configuration saved to {}", config_path);
+
+    Ok(())
+}
+
+async fn update_command(
+    app_config: &mut AppConfig,
+    config_path: &str,
+    specific_devices: Vec<String>,
+    force: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Determine which devices to update
+    let devices_to_update: Vec<String> = if specific_devices.is_empty() {
+        // Update all devices
+        app_config
+            .devices
+            .iter()
+            .filter(|device| {
+                // Skip devices that aren't identified yet (they should use identify command)
+                device.brand.is_some() && device.device_type.is_some() &&
+                // Include if force is set or if device needs update based on cache time
+                (force || app_config.needs_update(&device.hostname))
+            })
+            .map(|device| device.hostname.clone())
+            .collect()
+    } else {
+        // Update only specified devices
+        let mut valid_devices = Vec::new();
+        for hostname in specific_devices {
+            if let Some(device) = app_config.get_device(&hostname) {
+                if device.brand.is_none() || device.device_type.is_none() {
+                    warn!("Device '{}' is not yet identified, use 'identify' command first", hostname);
+                    continue;
+                }
+                if force || app_config.needs_update(&hostname) {
+                    valid_devices.push(hostname);
+                } else {
+                    info!("Device '{}' was recently updated, use --force to update anyway", hostname);
+                }
+            } else {
+                warn!("Device '{}' not found in configuration", hostname);
+            }
+        }
+        valid_devices
+    };
+
+    if devices_to_update.is_empty() {
+        if force {
+            info!("No devices found to update");
+        } else {
+            info!("All specified devices are already up to date. Use --force to update anyway.");
+        }
+        return Ok(());
+    }
+
+    info!("Updating {} devices...", devices_to_update.len());
+
+    for hostname in devices_to_update {
+        info!("Updating device: {}", hostname);
+
+        if let Some(device_config) = app_config.get_device(&hostname).cloned() {
+            match identify_and_interrogate_device(&device_config, app_config).await {
+                Ok((brand, device_type, device_state)) => {
+                    info!("Updated {:?} {:?} - {} interfaces, {} routes", 
+                          brand, device_type, 
+                          device_state.device.interfaces.len(),
+                          device_state.device.routes.len());
+                    
+                    // Update device identification (in case type changed)
+                    app_config.update_device_identification(&hostname, brand, device_type)?;
+
+                    // Save updated device state
+                    match app_config.save_device_state(&hostname, &device_state) {
+                        Ok(()) => info!("Device state updated successfully"),
+                        Err(e) => warn!("Failed to save updated device state: {}", e),
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to update {}: {}", hostname, e);
                 }
             }
         }

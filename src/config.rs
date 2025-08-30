@@ -184,6 +184,32 @@ impl AppConfig {
         }
     }
 
+    pub fn needs_update(&self, hostname: &str) -> bool {
+        if let Some(device) = self.get_device(hostname) {
+            // Always need update if never interrogated
+            let Some(last_interrogated_str) = &device.last_interrogated else {
+                return true;
+            };
+
+            // Parse the last interrogated time
+            match chrono::DateTime::parse_from_rfc3339(last_interrogated_str) {
+                Ok(last_interrogated) => {
+                    let now = chrono::Utc::now();
+                    let age = now.signed_duration_since(last_interrogated);
+                    
+                    // Update if more than 1 hour old (configurable in future)
+                    age.num_hours() >= 1
+                }
+                Err(_) => {
+                    // Invalid timestamp format, assume needs update
+                    true
+                }
+            }
+        } else {
+            false
+        }
+    }
+
     pub fn update_device_identification(
         &mut self,
         hostname: &str,
