@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use russh::{client, keys::ssh_key};
-use russh::keys::{PrivateKey, PrivateKeyWithHashAlg};
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 
 use ssh_config::SSHConfig;
 use tracing::debug;
@@ -343,43 +343,46 @@ impl SshClient {
                     debug!("Key data length: {} bytes", key_data.len());
                     debug!("First 100 chars of key: {}", &key_data.chars().take(100).collect::<String>());
                     
-                    match PrivateKey::from_bytes(key_data.as_bytes()) {
-                        Ok(key) => {
-                            debug!("Successfully loaded key from bytes");
-                            if let Some(phrase) = passphrase {
-                                debug!("Attempting to decrypt key with provided passphrase");
-                                match key.decrypt(phrase) {
-                                    Ok(decrypted_key) => {
-                                        debug!("Successfully decrypted key with passphrase");
-                                        decrypted_key
-                                    },
-                                    Err(e) => {
-                                        debug!("Failed to decrypt PEM key with passphrase: {}", e);
-                                        if is_encrypted_pem {
-                                            debug!("Key appears to be encrypted but passphrase failed - check passphrase is correct");
-                                            return Ok(false);
-                                        } else {
-                                            // If decryption fails but key doesn't appear encrypted, try using as-is
-                                            debug!("Trying to use key as unencrypted");
-                                            key
-                                        }
-                                    }
+                    // Try decode_secret_key first for encrypted PEM keys
+                    if is_encrypted_pem {
+                        if let Some(phrase) = passphrase {
+                            debug!("Using decode_secret_key for encrypted PEM key");
+                            match decode_secret_key(&key_data, Some(phrase)) {
+                                Ok(key) => {
+                                    debug!("Successfully decoded encrypted PEM key");
+                                    key
                                 }
-                            } else {
-                                if is_encrypted_pem {
-                                    debug!("Key is encrypted but no passphrase was provided");
+                                Err(e) => {
+                                    debug!("Failed to decode encrypted PEM key: {}", e);
                                     return Ok(false);
                                 }
+                            }
+                        } else {
+                            debug!("Encrypted PEM key requires passphrase");
+                            return Ok(false);
+                        }
+                    } else {
+                        // For unencrypted keys, try both methods
+                        match PrivateKey::from_bytes(key_data.as_bytes()) {
+                            Ok(key) => {
+                                debug!("Successfully loaded key from bytes");
                                 key
                             }
-                        }
-                        Err(e) => {
-                            debug!("Failed to load key from bytes: {}", e);
-                            debug!("Key might be corrupted or in an unsupported format");
-                            if is_encrypted_pem {
-                                debug!("This appears to be an encrypted PEM key - ensure passphrase is provided");
+                            Err(e) => {
+                                debug!("Failed to load key from bytes: {}", e);
+                                // Try decode_secret_key as fallback
+                                match decode_secret_key(&key_data, passphrase.as_deref()) {
+                                    Ok(key) => {
+                                        debug!("Successfully decoded key with decode_secret_key");
+                                        key
+                                    }
+                                    Err(decode_err) => {
+                                        debug!("decode_secret_key also failed: {}", decode_err);
+                                        debug!("Key might be corrupted or in an unsupported format");
+                                        return Ok(false);
+                                    }
+                                }
                             }
-                            return Ok(false);
                         }
                     }
                 };
