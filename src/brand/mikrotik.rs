@@ -198,7 +198,7 @@ impl ConfParser for Mikrotik {
                 } else {
                     &immediate_gw
                 };
-                
+
                 // For now, just create a placeholder UUID - we'll link properly during build if needed
                 RouteType::Local(uuid::Uuid::new_v4())
             } else {

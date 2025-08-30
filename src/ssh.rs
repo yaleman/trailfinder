@@ -1,10 +1,10 @@
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use russh::{client, keys::ssh_key};
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
+use russh::{client, keys::ssh_key};
 
 use ssh_config::SSHConfig;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{DeviceType, config::DeviceBrand};
 
@@ -62,8 +62,8 @@ impl client::Handler for ClientHandler {
     async fn check_server_key(
         &mut self,
         server_public_key: &ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> { 
-        Ok(true) 
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
     }
 }
 impl SshClient {
@@ -175,7 +175,7 @@ impl SshClient {
 
     async fn create_session(&self) -> Result<client::Handle<ClientHandler>, SshError> {
         let mut config = client::Config::default();
-        
+
         // Add legacy algorithms for compatibility with older Cisco devices
         config.preferred.kex = vec![
             // Modern algorithms first
@@ -184,10 +184,11 @@ impl SshClient {
             russh::kex::DH_G16_SHA512,
             // Legacy algorithms for Cisco compatibility
             russh::kex::ECDH_SHA2_NISTP256,
-            russh::kex::ECDH_SHA2_NISTP384, 
+            russh::kex::ECDH_SHA2_NISTP384,
             russh::kex::ECDH_SHA2_NISTP521,
             russh::kex::DH_G14_SHA1,
-        ].into();
+        ]
+        .into();
 
         let handler = ClientHandler;
 
@@ -214,9 +215,9 @@ impl SshClient {
                 None
             },
             key_path.map(|path| AuthMethod::KeyFile {
-                    path: path.to_string(),
-                    passphrase: key_passphrase.map(String::from),
-                }),
+                path: path.to_string(),
+                passphrase: key_passphrase.map(String::from),
+            }),
             password.map(|pwd| AuthMethod::Password(pwd.to_string())),
         ]
         .into_iter()
@@ -252,10 +253,7 @@ impl SshClient {
                 debug!("Or use an unencrypted key temporarily");
                 Ok(false)
             }
-            AuthMethod::KeyFile {
-                path,
-                passphrase,
-            } => {
+            AuthMethod::KeyFile { path, passphrase } => {
                 let expanded_path = shellexpand::tilde(path);
                 let key_path_buf = std::path::Path::new(expanded_path.as_ref());
 
@@ -281,10 +279,10 @@ impl SshClient {
                     debug!("Key file is empty");
                     return Ok(false);
                 }
-                
+
                 let first_line = key_data.lines().next().unwrap_or("");
                 debug!("Key file first line: {}", first_line);
-                
+
                 // Check for common key format indicators
                 if key_data.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
                     debug!("Detected OpenSSH format key");
@@ -308,7 +306,9 @@ impl SshClient {
                     // Handle OpenSSH format
                     match passphrase {
                         Some(phrase) => {
-                            match PrivateKey::from_openssh(&key_data).and_then(|k| k.decrypt(phrase)) {
+                            match PrivateKey::from_openssh(&key_data)
+                                .and_then(|k| k.decrypt(phrase))
+                            {
                                 Ok(key) => key,
                                 Err(e) => {
                                     debug!("Failed to decrypt OpenSSH key: {}", e);
@@ -316,33 +316,30 @@ impl SshClient {
                                 }
                             }
                         }
-                        None => {
-                            match PrivateKey::from_openssh(&key_data) {
-                                Ok(key) => key,
-                                Err(e) => {
-                                    debug!("Failed to load unencrypted OpenSSH key: {}", e);
-                                    return Ok(false);
-                                }
+                        None => match PrivateKey::from_openssh(&key_data) {
+                            Ok(key) => key,
+                            Err(e) => {
+                                debug!("Failed to load unencrypted OpenSSH key: {}", e);
+                                return Ok(false);
                             }
-                        }
+                        },
                     }
                 } else {
                     // Handle PEM and other formats
                     debug!("Attempting to load as PEM or other format");
-                    
+
                     // Check if this is an encrypted PEM key that needs a passphrase
-                    let is_encrypted_pem = key_data.contains("Proc-Type: 4,ENCRYPTED") || 
-                                          key_data.contains("DEK-Info:");
-                                          
+                    let is_encrypted_pem = key_data.contains("Proc-Type: 4,ENCRYPTED")
+                        || key_data.contains("DEK-Info:");
+
                     if is_encrypted_pem && passphrase.is_none() {
                         debug!("Key is encrypted but no passphrase provided");
-                        debug!("Try setting SSH_KEY_PASSPHRASE environment variable or configuring ssh_key_passphrase in device config");
+                        debug!(
+                            "Try setting SSH_KEY_PASSPHRASE environment variable or configuring ssh_key_passphrase in device config"
+                        );
                         return Ok(false);
                     }
-                    
-                    debug!("Key data length: {} bytes", key_data.len());
-                    debug!("First 100 chars of key: {}", &key_data.chars().take(100).collect::<String>());
-                    
+
                     // Try decode_secret_key first for encrypted PEM keys
                     if is_encrypted_pem {
                         if let Some(phrase) = passphrase {
@@ -378,7 +375,9 @@ impl SshClient {
                                     }
                                     Err(decode_err) => {
                                         debug!("decode_secret_key also failed: {}", decode_err);
-                                        debug!("Key might be corrupted or in an unsupported format");
+                                        debug!(
+                                            "Key might be corrupted or in an unsupported format"
+                                        );
                                         return Ok(false);
                                     }
                                 }
@@ -485,11 +484,11 @@ impl SshClient {
                         match data {
                             Some(russh::ChannelMsg::Data { data }) => {
                                 stdout_buffer.extend_from_slice(&data);
-                                debug!("Read {} bytes from stdout (total: {})", data.len(), stdout_buffer.len());
+                                trace!("Read {} bytes from stdout (total: {})", data.len(), stdout_buffer.len());
                             }
                             Some(russh::ChannelMsg::ExtendedData { data, ext: 1 }) => {
                                 stderr_buffer.extend_from_slice(&data);
-                                debug!("Read {} bytes from stderr (total: {})", data.len(), stderr_buffer.len());
+                                trace!("Read {} bytes from stderr (total: {})", data.len(), stderr_buffer.len());
                             }
                             Some(russh::ChannelMsg::Eof) => {
                                 debug!("Received EOF");
@@ -556,18 +555,31 @@ impl DeviceIdentifier {
         // Try to identify MikroTik first using /system identity export
         match ssh_client.execute_command("/system identity export").await {
             Ok(output) => {
-                debug!("MikroTik command '/system identity export' output: '{}'", output.trim());
+                debug!(
+                    "MikroTik command '/system identity export' output: '{}'",
+                    output.trim()
+                );
                 if output.contains("RouterOS") || output.contains("SwOS") {
                     // Try to get more specific device info for type detection
-                    let device_type = match ssh_client.execute_command("/system routerboard print").await {
+                    let device_type = match ssh_client
+                        .execute_command("/system routerboard print")
+                        .await
+                    {
                         Ok(board_output) => {
                             debug!("MikroTik board info: '{}'", board_output.trim());
-                            if board_output.contains("CCR") || board_output.contains("Cloud Core Router") {
+                            if board_output.contains("CCR")
+                                || board_output.contains("Cloud Core Router")
+                            {
                                 DeviceType::Router
-                            } else if board_output.contains("CRS") || board_output.contains("Cloud Router Switch") {
+                            } else if board_output.contains("CRS")
+                                || board_output.contains("Cloud Router Switch")
+                            {
                                 DeviceType::Switch
-                            } else if board_output.contains("hAP") || board_output.contains("SXT") || 
-                                      board_output.contains("cAP") || board_output.contains("wAP") {
+                            } else if board_output.contains("hAP")
+                                || board_output.contains("SXT")
+                                || board_output.contains("cAP")
+                                || board_output.contains("wAP")
+                            {
                                 DeviceType::AccessPoint
                             } else {
                                 DeviceType::Router // Default for RouterBoard and other devices
@@ -586,7 +598,10 @@ impl DeviceIdentifier {
                 }
             }
             Err(e) => {
-                debug!("MikroTik identification with '/system identity export' failed: {}", e);
+                debug!(
+                    "MikroTik identification with '/system identity export' failed: {}",
+                    e
+                );
             }
         }
 

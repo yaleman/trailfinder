@@ -13,7 +13,7 @@ ssh_config = "0.1"
 dirs = "6.0"
 shellexpand = { version = "3.1.1", features = ["path"] }
 serde_with = { version = "3.14.0", features = ["chrono", "json"] }
-tracing = "0.1"
+tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4.5.46", features = ["derive"] }
 russh = { version = "0.54.3", features = ["yasna"] }

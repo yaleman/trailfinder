@@ -196,7 +196,7 @@ impl AppConfig {
                 Ok(last_interrogated) => {
                     let now = chrono::Utc::now();
                     let age = now.signed_duration_since(last_interrogated);
-                    
+
                     // Update if more than 1 hour old (configurable in future)
                     age.num_hours() >= 1
                 }

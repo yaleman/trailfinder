@@ -160,9 +160,10 @@ impl ConfParser for Cisco {
                     // Administrative distance/metric in format [distance/metric]
                     let distance_str = part.trim_matches(['[', ']']);
                     if let Some(slash_pos) = distance_str.find('/')
-                        && let Ok(dist) = distance_str[..slash_pos].parse::<u16>() {
-                            distance = Some(dist);
-                        }
+                        && let Ok(dist) = distance_str[..slash_pos].parse::<u16>()
+                    {
+                        distance = Some(dist);
+                    }
                 }
             }
 

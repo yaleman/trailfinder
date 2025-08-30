@@ -1,4 +1,7 @@
-use std::{net::{IpAddr, SocketAddr}, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use clap::{Parser, Subcommand};
 use tracing::{debug, error, info, warn};
@@ -22,7 +25,12 @@ struct Cli {
     debug: bool,
 
     /// Path to devices configuration file
-    #[arg(short = 'c', long = "config", default_value = "devices.json", global = true)]
+    #[arg(
+        short = 'c',
+        long = "config",
+        default_value = "devices.json",
+        global = true
+    )]
     config_path: String,
 
     #[command(subcommand)]
@@ -58,16 +66,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Initialize tracing subscriber with CLI options
-    let env_filter = if cli.debug {
-        EnvFilter::new("debug")
-    } else {
-        EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| EnvFilter::new("info"))
-    };
+    let env_filter_str = if cli.debug { "debug" } else { "info" };
+
+    let env_filter = EnvFilter::new(&format!(
+        "{env_filter_str},russh::client=info,russh::sshbuffer=info"
+    ));
 
     tracing_subscriber::registry()
         .with(
             fmt::layer()
-                .with_target(false)
+                .with_target(true)
                 .with_thread_ids(false)
                 .with_level(true),
         )
@@ -114,9 +122,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Handle different commands
-    match cli.command.unwrap_or(Commands::Identify { hostname: None, username: None, keyfile: None, ip_address: None }) {
-        Commands::Identify { hostname, username, keyfile, ip_address } => {
-            identify_command(&mut app_config, config_path, hostname, username, keyfile, ip_address).await?;
+    match cli.command.unwrap_or(Commands::Identify {
+        hostname: None,
+        username: None,
+        keyfile: None,
+        ip_address: None,
+    }) {
+        Commands::Identify {
+            hostname,
+            username,
+            keyfile,
+            ip_address,
+        } => {
+            identify_command(
+                &mut app_config,
+                config_path,
+                hostname,
+                username,
+                keyfile,
+                ip_address,
+            )
+            .await?;
         }
         Commands::Update { devices } => {
             update_command(&mut app_config, config_path, devices).await?;
@@ -134,32 +160,36 @@ async fn identify_command(
     keyfile: Option<String>,
     ip_address: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (devices_to_identify, new_device_hostname): (Vec<String>, Option<String>) = if let Some(hostname) = target_hostname {
-        // If a specific hostname is provided, check if it exists in config
-        if app_config.get_device(&hostname).is_none() {
-            info!("Device '{}' not found in config, will add after successful identification", hostname);
-            // Don't add to config yet - wait for successful identification
-            (vec![hostname.clone()], Some(hostname))
+    let (devices_to_identify, new_device_hostname): (Vec<String>, Option<String>) =
+        if let Some(hostname) = target_hostname {
+            // If a specific hostname is provided, check if it exists in config
+            if app_config.get_device(&hostname).is_none() {
+                info!(
+                    "Device '{}' not found in config, will add after successful identification",
+                    hostname
+                );
+                // Don't add to config yet - wait for successful identification
+                (vec![hostname.clone()], Some(hostname))
+            } else {
+                // Device exists in config, process normally
+                (vec![hostname], None)
+            }
         } else {
-            // Device exists in config, process normally
-            (vec![hostname], None)
-        }
-    } else {
-        // Process devices that need identification
-        let devices: Vec<String> = app_config
-            .devices
-            .iter()
-            .filter(|device| app_config.needs_identification(&device.hostname))
-            .map(|device| device.hostname.clone())
-            .collect();
-            
-        if devices.is_empty() {
-            info!("All devices are already identified and up to date");
-            return Ok(());
-        }
-        
-        (devices, None)
-    };
+            // Process devices that need identification
+            let devices: Vec<String> = app_config
+                .devices
+                .iter()
+                .filter(|device| app_config.needs_identification(&device.hostname))
+                .map(|device| device.hostname.clone())
+                .collect();
+
+            if devices.is_empty() {
+                info!("All devices are already identified and up to date");
+                return Ok(());
+            }
+
+            (devices, None)
+        };
 
     info!("Identifying {} device(s)...", devices_to_identify.len());
 
@@ -170,9 +200,9 @@ async fn identify_command(
         let mut device_config = if let Some(ref new_hostname) = new_device_hostname {
             if hostname == *new_hostname {
                 // Create temporary device config for identification
-                DeviceConfig { 
-                    hostname: hostname.clone(), 
-                    ..Default::default() 
+                DeviceConfig {
+                    hostname: hostname.clone(),
+                    ..Default::default()
                 }
             } else {
                 app_config.get_device(&hostname).cloned().unwrap()
@@ -202,14 +232,18 @@ async fn identify_command(
         match identify_and_interrogate_device(&device_config, app_config).await {
             Ok((brand, device_type, device_state)) => {
                 info!("Identified as {:?} {:?}", brand, device_type);
-                
+
                 // If this is a new device, add it to config now that identification succeeded
                 if let Some(ref new_hostname) = new_device_hostname
-                    && hostname == *new_hostname {
-                        info!("Adding '{}' to configuration after successful identification", hostname);
-                        app_config.add_device(device_config);
-                    }
-                
+                    && hostname == *new_hostname
+                {
+                    info!(
+                        "Adding '{}' to configuration after successful identification",
+                        hostname
+                    );
+                    app_config.add_device(device_config);
+                }
+
                 app_config.update_device_identification(&hostname, brand, device_type)?;
 
                 // Save device state
@@ -222,9 +256,13 @@ async fn identify_command(
                 error!("Failed to identify/interrogate {}: {}", hostname, e);
                 // If this was a new device that failed identification, don't add it to config
                 if let Some(ref new_hostname) = new_device_hostname
-                    && hostname == *new_hostname {
-                        info!("Not adding '{}' to configuration due to identification failure", hostname);
-                    }
+                    && hostname == *new_hostname
+                {
+                    info!(
+                        "Not adding '{}' to configuration due to identification failure",
+                        hostname
+                    );
+                }
             }
         }
     }
@@ -260,7 +298,10 @@ async fn update_command(
         for hostname in specific_devices {
             if let Some(device) = app_config.get_device(&hostname) {
                 if device.brand.is_none() || device.device_type.is_none() {
-                    warn!("Device '{}' is not yet identified, use 'identify' command first", hostname);
+                    warn!(
+                        "Device '{}' is not yet identified, use 'identify' command first",
+                        hostname
+                    );
                     continue;
                 }
                 // Update command always forces update
@@ -285,11 +326,14 @@ async fn update_command(
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
             match identify_and_interrogate_device(&device_config, app_config).await {
                 Ok((brand, device_type, device_state)) => {
-                    info!("Updated {:?} {:?} - {} interfaces, {} routes", 
-                          brand, device_type, 
-                          device_state.device.interfaces.len(),
-                          device_state.device.routes.len());
-                    
+                    info!(
+                        "Updated {:?} {:?} - {} interfaces, {} routes",
+                        brand,
+                        device_type,
+                        device_state.device.interfaces.len(),
+                        device_state.device.routes.len()
+                    );
+
                     // Update device identification (in case type changed)
                     app_config.update_device_identification(&hostname, brand, device_type)?;
 
@@ -393,8 +437,9 @@ async fn identify_and_interrogate_device(
     info!("Interrogating device configuration... for brand {brand}");
 
     // Interrogate device using trait-based approach
-    let device_state = interrogate_device_by_brand(brand.clone(), &mut ssh_client, device_config, device_type).await?;
+    let device_state =
+        interrogate_device_by_brand(brand.clone(), &mut ssh_client, device_config, device_type)
+            .await?;
 
     Ok((brand, device_type, device_state))
 }
-
