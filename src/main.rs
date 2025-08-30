@@ -170,9 +170,10 @@ async fn identify_command(
         let mut device_config = if let Some(ref new_hostname) = new_device_hostname {
             if hostname == *new_hostname {
                 // Create temporary device config for identification
-                let mut temp_config = DeviceConfig::default();
-                temp_config.hostname = hostname.clone();
-                temp_config
+                DeviceConfig { 
+                    hostname: hostname.clone(), 
+                    ..Default::default() 
+                }
             } else {
                 app_config.get_device(&hostname).cloned().unwrap()
             }
@@ -203,12 +204,11 @@ async fn identify_command(
                 info!("Identified as {:?} {:?}", brand, device_type);
                 
                 // If this is a new device, add it to config now that identification succeeded
-                if let Some(ref new_hostname) = new_device_hostname {
-                    if hostname == *new_hostname {
+                if let Some(ref new_hostname) = new_device_hostname
+                    && hostname == *new_hostname {
                         info!("Adding '{}' to configuration after successful identification", hostname);
                         app_config.add_device(device_config);
                     }
-                }
                 
                 app_config.update_device_identification(&hostname, brand, device_type)?;
 
@@ -221,11 +221,10 @@ async fn identify_command(
             Err(e) => {
                 error!("Failed to identify/interrogate {}: {}", hostname, e);
                 // If this was a new device that failed identification, don't add it to config
-                if let Some(ref new_hostname) = new_device_hostname {
-                    if hostname == *new_hostname {
+                if let Some(ref new_hostname) = new_device_hostname
+                    && hostname == *new_hostname {
                         info!("Not adding '{}' to configuration due to identification failure", hostname);
                     }
-                }
             }
         }
     }
@@ -374,7 +373,7 @@ async fn identify_and_interrogate_device(
                 let key_passphrase = device_config
                     .ssh_key_passphrase
                     .as_deref()
-                    .or_else(|| env_passphrase.as_deref());
+                    .or(env_passphrase.as_deref());
 
                 SshClient::connect(
                     socket_addr,

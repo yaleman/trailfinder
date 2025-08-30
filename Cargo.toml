@@ -16,7 +16,7 @@ serde_with = { version = "3.14.0", features = ["chrono", "json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4.5.46", features = ["derive"] }
-russh = "0.54.3"
+russh = { version = "0.54.3", features = ["openssl"] }
 russh-keys = "0.44"
 regex = "1.11.2"
 cidr = { version = "0.3.1", features = ["serde"] }

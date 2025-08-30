@@ -59,11 +59,11 @@ struct ClientHandler;
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
     #[allow(unused_variables)]
-    fn check_server_key(
+    async fn check_server_key(
         &mut self,
         server_public_key: &ssh_key::PublicKey,
-    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-        async { Ok(true) }
+    ) -> Result<bool, Self::Error> { 
+        Ok(true) 
     }
 }
 impl SshClient {
@@ -213,19 +213,11 @@ impl SshClient {
             } else {
                 None
             },
-            if let Some(path) = key_path {
-                Some(AuthMethod::KeyFile {
+            key_path.map(|path| AuthMethod::KeyFile {
                     path: path.to_string(),
                     passphrase: key_passphrase.map(String::from),
-                })
-            } else {
-                None
-            },
-            if let Some(pwd) = password {
-                Some(AuthMethod::Password(pwd.to_string()))
-            } else {
-                None
-            },
+                }),
+            password.map(|pwd| AuthMethod::Password(pwd.to_string())),
         ]
         .into_iter()
         .flatten()
@@ -574,10 +566,8 @@ impl DeviceIdentifier {
                             } else if board_output.contains("hAP") || board_output.contains("SXT") || 
                                       board_output.contains("cAP") || board_output.contains("wAP") {
                                 DeviceType::AccessPoint
-                            } else if board_output.contains("RB") {
-                                DeviceType::Router // Default for RouterBoard devices
                             } else {
-                                DeviceType::Router // Default fallback
+                                DeviceType::Router // Default for RouterBoard and other devices
                             }
                         }
                         Err(_) => {

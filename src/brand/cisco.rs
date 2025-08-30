@@ -111,8 +111,7 @@ impl ConfParser for Cisco {
             let target: IpCidr = if let Some(captures) = target_matches {
                 match captures
                     .name("target")
-                    .map(|m| m.as_str().parse::<cidr::IpCidr>().ok())
-                    .flatten()
+                    .and_then(|m| m.as_str().parse::<cidr::IpCidr>().ok())
                 {
                     Some(cidr) => cidr,
                     None => {
@@ -160,11 +159,10 @@ impl ConfParser for Cisco {
                 } else if part.starts_with('[') && part.contains('/') && part.ends_with(']') {
                     // Administrative distance/metric in format [distance/metric]
                     let distance_str = part.trim_matches(['[', ']']);
-                    if let Some(slash_pos) = distance_str.find('/') {
-                        if let Ok(dist) = distance_str[..slash_pos].parse::<u16>() {
+                    if let Some(slash_pos) = distance_str.find('/')
+                        && let Ok(dist) = distance_str[..slash_pos].parse::<u16>() {
                             distance = Some(dist);
                         }
-                    }
                 }
             }
 
@@ -199,6 +197,7 @@ impl DeviceInterrogator for Cisco {
         "show ip route".to_string()
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn interrogate_device(
         &self,
         ssh_client: &mut SshClient,

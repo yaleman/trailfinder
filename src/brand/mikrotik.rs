@@ -258,6 +258,7 @@ impl DeviceInterrogator for Mikrotik {
         "/ip route print without-paging detail".to_string()
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn interrogate_device(
         &self,
         ssh_client: &mut SshClient,
