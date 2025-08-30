@@ -146,15 +146,19 @@ async function showDeviceDetails(deviceId) {
 function renderDeviceDetails(device) {
     const content = document.getElementById('device-detail-content');
     
-    const interfacesTable = device.interfaces.map(iface => `
-        <tr>
-            <td>${iface.name}</td>
-            <td><span class="interface-type ${iface.interface_type.toLowerCase()}">${iface.interface_type}</span></td>
-            <td>${iface.vlan || 'N/A'}</td>
-            <td>${iface.addresses.join(', ') || 'None'}</td>
-            <td>${iface.comment || ''}</td>
-        </tr>
-    `).join('');
+    const interfacesTable = device.interfaces.map(iface => {
+        const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
+        const interfaceClass = getInterfaceTypeClass(iface.interface_type);
+        return `
+            <tr>
+                <td>${iface.name}</td>
+                <td><span class="interface-type ${interfaceClass}">${interfaceType}</span></td>
+                <td>${iface.vlan || 'N/A'}</td>
+                <td>${iface.addresses.join(', ') || 'None'}</td>
+                <td>${iface.comment || ''}</td>
+            </tr>
+        `;
+    }).join('');
     
     const routesTable = device.routes.map(route => `
         <tr>
@@ -227,8 +231,11 @@ async function loadTopology() {
 }
 
 function renderTopology(topology) {
-    const svg = d3.select('#topology-svg');
     const container = document.getElementById('topology-container');
+    // Clear loading message and ensure SVG exists
+    container.innerHTML = '<svg id="topology-svg"></svg>';
+    
+    const svg = d3.select('#topology-svg');
     const width = container.clientWidth;
     const height = container.clientHeight;
     
@@ -278,10 +285,10 @@ function renderTopology(topology) {
             .on('start', dragstarted)
             .on('drag', dragged)
             .on('end', dragended))
-        .on('click', (event, d) => showDeviceDetails(d.device_id))
-        .on('mouseover', (event, d) => {
+        .on('click', (_event, d) => showDeviceDetails(d.device_id))
+        .on('mouseover', (_event, d) => {
             // Add tooltip
-            const tooltip = d3.select('body').append('div')
+            d3.select('body').append('div')
                 .attr('class', 'tooltip')
                 .style('position', 'absolute')
                 .style('background', 'rgba(0,0,0,0.8)')
@@ -487,6 +494,24 @@ function getRouteTypeDisplay(routeType) {
         return type;
     }
     return routeType;
+}
+
+function getInterfaceTypeDisplay(interfaceType) {
+    if (typeof interfaceType === 'object') {
+        // Handle {"Other": "wg"} format
+        const type = Object.keys(interfaceType)[0];
+        const value = interfaceType[type];
+        return type === 'Other' ? value : type;
+    }
+    return interfaceType;
+}
+
+function getInterfaceTypeClass(interfaceType) {
+    if (typeof interfaceType === 'object') {
+        const type = Object.keys(interfaceType)[0];
+        return type.toLowerCase();
+    }
+    return interfaceType.toLowerCase();
 }
 
 function showError(message) {
