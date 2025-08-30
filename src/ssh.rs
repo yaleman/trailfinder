@@ -254,7 +254,10 @@ impl SshClient {
     ) -> Result<bool, SshError> {
         match auth_method {
             AuthMethod::SshAgent => {
-                debug!("SSH agent authentication not yet implemented in russh migration");
+                debug!("SSH agent authentication is not yet fully implemented");
+                debug!("To use your encrypted key, please convert it to OpenSSH format:");
+                debug!("  ssh-keygen -p -m OpenSSH -f ~/.ssh/your_key_file");
+                debug!("Or use an unencrypted key temporarily");
                 Ok(false)
             }
             AuthMethod::KeyFile {
@@ -280,23 +283,111 @@ impl SshClient {
                     }
                 };
 
-                let private_key = match passphrase {
-                    Some(phrase) => {
-                        match PrivateKey::from_openssh(&key_data).and_then(|k| k.decrypt(phrase)) {
-                            Ok(key) => key,
-                            Err(e) => {
-                                debug!("Failed to decrypt key with passphrase: {}", e);
-                                return Ok(false);
+                // Add diagnostics about the key file format
+                debug!("Key file size: {} bytes", key_data.len());
+                if key_data.is_empty() {
+                    debug!("Key file is empty");
+                    return Ok(false);
+                }
+                
+                let first_line = key_data.lines().next().unwrap_or("");
+                debug!("Key file first line: {}", first_line);
+                
+                // Check for common key format indicators
+                if key_data.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
+                    debug!("Detected OpenSSH format key");
+                } else if key_data.contains("-----BEGIN RSA PRIVATE KEY-----") {
+                    debug!("Detected RSA PEM format key");
+                    if key_data.contains("Proc-Type: 4,ENCRYPTED") {
+                        debug!("Key is encrypted with DEK-Info format");
+                    }
+                } else if key_data.contains("-----BEGIN EC PRIVATE KEY-----") {
+                    debug!("Detected EC PEM format key");
+                } else if key_data.contains("-----BEGIN PRIVATE KEY-----") {
+                    debug!("Detected PKCS#8 PEM format key");
+                } else if key_data.contains("-----BEGIN DSA PRIVATE KEY-----") {
+                    debug!("Detected DSA PEM format key");
+                } else {
+                    debug!("Unknown key format - no standard headers found");
+                }
+
+                // Try to load the key based on detected format
+                let private_key = if key_data.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
+                    // Handle OpenSSH format
+                    match passphrase {
+                        Some(phrase) => {
+                            match PrivateKey::from_openssh(&key_data).and_then(|k| k.decrypt(phrase)) {
+                                Ok(key) => key,
+                                Err(e) => {
+                                    debug!("Failed to decrypt OpenSSH key: {}", e);
+                                    return Ok(false);
+                                }
+                            }
+                        }
+                        None => {
+                            match PrivateKey::from_openssh(&key_data) {
+                                Ok(key) => key,
+                                Err(e) => {
+                                    debug!("Failed to load unencrypted OpenSSH key: {}", e);
+                                    return Ok(false);
+                                }
                             }
                         }
                     }
-                    None => {
-                        match PrivateKey::from_openssh(&key_data) {
-                            Ok(key) => key,
-                            Err(e) => {
-                                debug!("Failed to load unencrypted key: {}", e);
-                                return Ok(false);
+                } else {
+                    // Handle PEM and other formats
+                    debug!("Attempting to load as PEM or other format");
+                    
+                    // Check if this is an encrypted PEM key that needs a passphrase
+                    let is_encrypted_pem = key_data.contains("Proc-Type: 4,ENCRYPTED") || 
+                                          key_data.contains("DEK-Info:");
+                                          
+                    if is_encrypted_pem && passphrase.is_none() {
+                        debug!("Key is encrypted but no passphrase provided");
+                        debug!("Try setting SSH_KEY_PASSPHRASE environment variable or configuring ssh_key_passphrase in device config");
+                        return Ok(false);
+                    }
+                    
+                    debug!("Key data length: {} bytes", key_data.len());
+                    debug!("First 100 chars of key: {}", &key_data.chars().take(100).collect::<String>());
+                    
+                    match PrivateKey::from_bytes(key_data.as_bytes()) {
+                        Ok(key) => {
+                            debug!("Successfully loaded key from bytes");
+                            if let Some(phrase) = passphrase {
+                                debug!("Attempting to decrypt key with provided passphrase");
+                                match key.decrypt(phrase) {
+                                    Ok(decrypted_key) => {
+                                        debug!("Successfully decrypted key with passphrase");
+                                        decrypted_key
+                                    },
+                                    Err(e) => {
+                                        debug!("Failed to decrypt PEM key with passphrase: {}", e);
+                                        if is_encrypted_pem {
+                                            debug!("Key appears to be encrypted but passphrase failed - check passphrase is correct");
+                                            return Ok(false);
+                                        } else {
+                                            // If decryption fails but key doesn't appear encrypted, try using as-is
+                                            debug!("Trying to use key as unencrypted");
+                                            key
+                                        }
+                                    }
+                                }
+                            } else {
+                                if is_encrypted_pem {
+                                    debug!("Key is encrypted but no passphrase was provided");
+                                    return Ok(false);
+                                }
+                                key
                             }
+                        }
+                        Err(e) => {
+                            debug!("Failed to load key from bytes: {}", e);
+                            debug!("Key might be corrupted or in an unsupported format");
+                            if is_encrypted_pem {
+                                debug!("This appears to be an encrypted PEM key - ensure passphrase is provided");
+                            }
+                            return Ok(false);
                         }
                     }
                 };
