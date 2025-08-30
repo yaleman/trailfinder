@@ -5,8 +5,8 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use trailfinder::{
-    DeviceType, Owner,
-    brand::{ConfParser, cisco::Cisco, mikrotik::Mikrotik},
+    DeviceType,
+    brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     ssh::{DeviceIdentifier, SshClient},
 };
@@ -32,14 +32,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Identify new devices that haven't been processed yet (default behavior)
-    Identify,
+    Identify {
+        /// Specific hostname to identify and add to config if not present
+        hostname: Option<String>,
+    },
     /// Update device state from live devices, forcing fresh data collection
     Update {
         /// Specific device hostnames to update (updates all if none specified)
         devices: Vec<String>,
-        /// Force update even if recently updated
-        #[arg(short, long)]
-        force: bool,
     },
 }
 
@@ -105,12 +105,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Handle different commands
-    match cli.command.unwrap_or(Commands::Identify) {
-        Commands::Identify => {
-            identify_command(&mut app_config, config_path).await?;
+    match cli.command.unwrap_or(Commands::Identify { hostname: None }) {
+        Commands::Identify { hostname } => {
+            identify_command(&mut app_config, config_path, hostname).await?;
         }
-        Commands::Update { devices, force } => {
-            update_command(&mut app_config, config_path, devices, force).await?;
+        Commands::Update { devices } => {
+            update_command(&mut app_config, config_path, devices).await?;
         }
     }
 
@@ -120,21 +120,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn identify_command(
     app_config: &mut AppConfig,
     config_path: &str,
+    target_hostname: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Process devices that need identification
-    let devices_to_identify: Vec<String> = app_config
-        .devices
-        .iter()
-        .filter(|device| app_config.needs_identification(&device.hostname))
-        .map(|device| device.hostname.clone())
-        .collect();
+    let devices_to_identify: Vec<String> = if let Some(hostname) = target_hostname {
+        // If a specific hostname is provided, check if it exists in config
+        if app_config.get_device(&hostname).is_none() {
+            info!("Device '{}' not found in config, adding it", hostname);
+            
+            // Create a default device config for the new hostname
+            let mut new_device = DeviceConfig::default();
+            new_device.hostname = hostname.clone();
+            
+            app_config.add_device(new_device);
+            info!("Added '{}' to configuration", hostname);
+        }
+        
+        // Always process the target hostname
+        vec![hostname]
+    } else {
+        // Process devices that need identification
+        let devices: Vec<String> = app_config
+            .devices
+            .iter()
+            .filter(|device| app_config.needs_identification(&device.hostname))
+            .map(|device| device.hostname.clone())
+            .collect();
+            
+        if devices.is_empty() {
+            info!("All devices are already identified and up to date");
+            return Ok(());
+        }
+        
+        devices
+    };
 
-    if devices_to_identify.is_empty() {
-        info!("All devices are already identified and up to date");
-        return Ok(());
-    }
-
-    info!("Identifying {} devices...", devices_to_identify.len());
+    info!("Identifying {} device(s)...", devices_to_identify.len());
 
     for hostname in devices_to_identify {
         info!("Processing device: {}", hostname);
@@ -169,7 +189,6 @@ async fn update_command(
     app_config: &mut AppConfig,
     config_path: &str,
     specific_devices: Vec<String>,
-    force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Determine which devices to update
     let devices_to_update: Vec<String> = if specific_devices.is_empty() {
@@ -179,9 +198,8 @@ async fn update_command(
             .iter()
             .filter(|device| {
                 // Skip devices that aren't identified yet (they should use identify command)
-                device.brand.is_some() && device.device_type.is_some() &&
-                // Include if force is set or if device needs update based on cache time
-                (force || app_config.needs_update(&device.hostname))
+                device.brand.is_some() && device.device_type.is_some()
+                // Update command always forces update
             })
             .map(|device| device.hostname.clone())
             .collect()
@@ -194,11 +212,8 @@ async fn update_command(
                     warn!("Device '{}' is not yet identified, use 'identify' command first", hostname);
                     continue;
                 }
-                if force || app_config.needs_update(&hostname) {
-                    valid_devices.push(hostname);
-                } else {
-                    info!("Device '{}' was recently updated, use --force to update anyway", hostname);
-                }
+                // Update command always forces update
+                valid_devices.push(hostname);
             } else {
                 warn!("Device '{}' not found in configuration", hostname);
             }
@@ -207,11 +222,7 @@ async fn update_command(
     };
 
     if devices_to_update.is_empty() {
-        if force {
-            info!("No devices found to update");
-        } else {
-            info!("All specified devices are already up to date. Use --force to update anyway.");
-        }
+        info!("No devices found to update");
         return Ok(());
     }
 
@@ -330,90 +341,9 @@ async fn identify_and_interrogate_device(
 
     info!("Interrogating device configuration... for brand {brand}");
 
-    // Interrogate device based on brand
-    let device_state = match brand {
-        DeviceBrand::Mikrotik => {
-            interrogate_mikrotik_device(&mut ssh_client, device_config, device_type).await?
-        }
-        DeviceBrand::Cisco => {
-            interrogate_cisco_device(&mut ssh_client, device_config, device_type).await?
-        }
-        _ => {
-            return Err(format!("Interrogation not supported for brand {:?}", brand).into());
-        }
-    };
+    // Interrogate device using trait-based approach
+    let device_state = interrogate_device_by_brand(brand.clone(), &mut ssh_client, device_config, device_type).await?;
 
     Ok((brand, device_type, device_state))
 }
 
-async fn interrogate_mikrotik_device(
-    ssh_client: &mut SshClient,
-    device_config: &DeviceConfig,
-    device_type: DeviceType,
-) -> Result<DeviceState, Box<dyn std::error::Error>> {
-    debug!("Fetching MikroTik interfaces...");
-    let interfaces_output = ssh_client.execute_command("/interface print").await?;
-
-    debug!("Fetching MikroTik routes...");
-    let routes_output = ssh_client.execute_command("/ip route print").await?;
-
-    // Combine outputs for hash calculation
-    let raw_config = format!("{}\n{}", interfaces_output, routes_output);
-
-    // Create parser and parse configuration
-    let mut parser = Mikrotik::new(
-        Some(device_config.hostname.clone()),
-        Owner::from(device_config.notes.clone().unwrap_or_default()),
-        device_type,
-    );
-
-    parser.parse_interfaces(&interfaces_output)?;
-    parser.parse_routes(&routes_output)?;
-
-    let device = parser.build();
-    let device_state = DeviceState::new(device, &raw_config);
-
-    info!(
-        "Parsed {} interfaces and {} routes",
-        device_state.device.interfaces.len(),
-        device_state.device.routes.len()
-    );
-
-    Ok(device_state)
-}
-
-async fn interrogate_cisco_device(
-    ssh_client: &mut SshClient,
-    device_config: &DeviceConfig,
-    device_type: DeviceType,
-) -> Result<DeviceState, Box<dyn std::error::Error>> {
-    debug!("Fetching Cisco interfaces...");
-    let interfaces_output = ssh_client.execute_command("show interfaces").await?;
-
-    debug!("Fetching Cisco routes...");
-    let routes_output = ssh_client.execute_command("show ip route").await?;
-
-    // Combine outputs for hash calculation
-    let raw_config = format!("{}\n{}", interfaces_output, routes_output);
-
-    // Create parser and parse configuration
-    let mut parser = Cisco::new(
-        Some(device_config.hostname.clone()),
-        Owner::from(device_config.notes.clone().unwrap_or_default()),
-        device_type,
-    );
-
-    parser.parse_interfaces(&interfaces_output)?;
-    parser.parse_routes(&routes_output)?;
-
-    let device = parser.build();
-    let device_state = DeviceState::new(device, &raw_config);
-
-    info!(
-        "Parsed {} interfaces and {} routes",
-        device_state.device.interfaces.len(),
-        device_state.device.routes.len()
-    );
-
-    Ok(device_state)
-}
