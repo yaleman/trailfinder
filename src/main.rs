@@ -12,6 +12,7 @@ use trailfinder::{
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     ssh::{DeviceIdentifier, SshClient},
+    web::{create_router, AppState},
 };
 
 /// Trailfinder - Network device discovery and configuration parsing tool
@@ -39,6 +40,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Start web server for network topology visualization
+    Web {
+        /// Port to bind the web server to
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        /// Address to bind the web server to
+        #[arg(short, long, default_value = "127.0.0.1")]
+        address: String,
+    },
     /// Identify new devices that haven't been processed yet (default behavior)
     Identify {
         /// Specific hostname to identify and add to config if not present
@@ -58,6 +68,33 @@ enum Commands {
         /// Specific device hostnames to update (updates all if none specified)
         devices: Vec<String>,
     },
+}
+
+async fn web_server_command(
+    app_config: &AppConfig,
+    address: &str,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    
+    info!("Starting web server on {}:{}", address, port);
+    
+    let state = AppState {
+        config: Arc::new(app_config.clone()),
+    };
+    
+    let app = create_router(state);
+    
+    let bind_addr = format!("{}:{}", address, port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    
+    info!("🌐 Web UI available at: http://{}", bind_addr);
+    info!("📊 API documentation at: http://{}/api", bind_addr);
+    info!("Press Ctrl+C to stop the server");
+    
+    axum::serve(listener, app).await?;
+    
+    Ok(())
 }
 
 #[tokio::main]
@@ -128,6 +165,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         keyfile: None,
         ip_address: None,
     }) {
+        Commands::Web { port, address } => {
+            return web_server_command(&app_config, &address, port).await;
+        }
         Commands::Identify {
             hostname,
             username,

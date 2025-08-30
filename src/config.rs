@@ -102,7 +102,7 @@ impl DeviceState {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub devices: Vec<DeviceConfig>,
     pub ssh_timeout_seconds: u64,

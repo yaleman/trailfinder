@@ -21,3 +21,7 @@ russh-keys = "0.49"
 regex = "1.11.2"
 cidr = { version = "0.3.1", features = ["serde"] }
 ssh-agent = "0.2.4"
+axum = { version = "0.8.4", features = ["http2"] }
+tokio-util = "0.7.16"
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["fs"] }

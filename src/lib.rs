@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub mod brand;
 pub mod config;
 pub mod ssh;
+pub mod web;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum DeviceType {
