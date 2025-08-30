@@ -109,3 +109,4 @@ See TODO.md for the current development plan and task status.
 - when editing Cargo.toml always try to use cargo commands unless it's impossible
 - clean up TODO.md when commiting checked-off tasks
 - update TODO.md with tasks before and after they're done
+- if wanting to test the app, just use cargo run rather than cargo build then running the binary
