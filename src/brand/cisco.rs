@@ -1,7 +1,15 @@
+use cidr::IpCidr;
+use regex::Regex;
+use uuid::Uuid;
+
+use super::DeviceInterrogator;
 use super::prelude::*;
+use crate::config::{DeviceConfig, DeviceState};
+use crate::ssh::SshClient;
 
 pub struct Cisco {
-    name: String,
+    hostname: String,
+    name: Option<String>,
     owner: Owner,
     device_type: DeviceType,
     routes: Vec<Route>,
@@ -9,14 +17,22 @@ pub struct Cisco {
 }
 
 impl ConfParser for Cisco {
-    fn new(name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
+    fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
-            name: name.unwrap_or(uuid::Uuid::new_v4().to_string()),
+            hostname,
+            name,
             owner,
             device_type,
             routes: Vec::new(),
             interfaces: Vec::new(),
         }
+    }
+
+    fn interface_by_name(&self, name: &str) -> Option<Uuid> {
+        self.interfaces
+            .iter()
+            .find(|iface| iface.name == name)
+            .map(|iface| iface.interface_id)
     }
 
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
@@ -66,6 +82,7 @@ impl ConfParser for Cisco {
                 };
 
                 let interface = Interface {
+                    interface_id: Uuid::new_v4(),
                     name: interface_name,
                     vlan,
                     addresses: Vec::new(), // IP addresses would need separate parsing
@@ -81,11 +98,33 @@ impl ConfParser for Cisco {
     }
 
     fn parse_routes(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
+        let route_finder = Regex::new(r#"(?P<target>[\d\.]+\d+)"#)?;
+
         for line in input_data.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+
+            let target_matches = route_finder.captures(line);
+
+            let target: IpCidr = if let Some(captures) = target_matches {
+                match captures
+                    .name("target")
+                    .map(|m| m.as_str().parse::<cidr::IpCidr>().ok())
+                    .flatten()
+                {
+                    Some(cidr) => cidr,
+                    None => {
+                        return Err(TrailFinderError::Parse(format!(
+                            "Failed to parse target CIDR in line: {}",
+                            line
+                        )));
+                    }
+                }
+            } else {
+                continue;
+            };
 
             // Parse Cisco "show ip route" output
             // Look for routes like:
@@ -98,19 +137,15 @@ impl ConfParser for Cisco {
                 continue;
             }
 
-            let route_code = parts[0];
-            let network = parts[1];
-
             // Determine route type
-            let route_type = if network == "0.0.0.0/0" || route_code.contains("*") {
-                RouteType::Default
+            let route_type = if target.to_string() == "0.0.0.0/0" || parts[0].contains("*") {
+                RouteType::Default(uuid::Uuid::new_v4()) // TODO: fix this
             } else {
-                RouteType::Specific
+                RouteType::NextHop(uuid::Uuid::new_v4()) // TODO: fix this
             };
 
             // Look for gateway information
             let mut gateway = None;
-            let mut interface_name = None;
             let mut distance = None;
 
             for (i, part) in parts.iter().enumerate() {
@@ -121,7 +156,7 @@ impl ConfParser for Cisco {
                     }
                 } else if *part == "connected," && i + 1 < parts.len() {
                     // Directly connected interface
-                    interface_name = Some(parts[i + 1].to_string());
+                    // interface_name = Some(parts[i + 1].to_string());
                 } else if part.starts_with('[') && part.contains('/') && part.ends_with(']') {
                     // Administrative distance/metric in format [distance/metric]
                     let distance_str = part.trim_matches(['[', ']']);
@@ -133,27 +168,9 @@ impl ConfParser for Cisco {
                 }
             }
 
-            // Create interface_id if we have an interface name
-            let interface_id = interface_name.map(|name| {
-                // Find the interface in our parsed interfaces to get the proper ID
-                if let Some(interface) = self.interfaces.iter().find(|iface| iface.name == name) {
-                    interface.interface_id(&self.name)
-                } else {
-                    // Create a temporary interface for ID generation
-                    let temp_interface = Interface {
-                        name: name.clone(),
-                        vlan: None,
-                        addresses: Vec::new(),
-                        interface_type: InterfaceType::Other(name),
-                        comment: None,
-                    };
-                    temp_interface.interface_id(&self.name)
-                }
-            });
-
             let route = Route {
+                target,
                 route_type,
-                interface_id,
                 gateway,
                 distance,
             };
@@ -165,12 +182,59 @@ impl ConfParser for Cisco {
     }
 
     fn build(self) -> Device {
-        Device {
-            name: self.name,
-            owner: self.owner,
-            device_type: self.device_type,
-            routes: self.routes,
-            interfaces: self.interfaces,
+        let mut device = Device::new(self.hostname, self.name, self.owner, self.device_type);
+        device.routes = self.routes;
+        device.interfaces = self.interfaces;
+
+        device
+    }
+}
+
+impl DeviceInterrogator for Cisco {
+    fn get_interfaces_command(&self) -> String {
+        "show interfaces".to_string()
+    }
+
+    fn get_routes_command(&self) -> String {
+        "show ip route".to_string()
+    }
+
+    fn interrogate_device(
+        &self,
+        ssh_client: &mut SshClient,
+        device_config: &DeviceConfig,
+        device_type: DeviceType,
+    ) -> impl std::future::Future<Output = Result<DeviceState, Box<dyn std::error::Error>>> + Send
+    {
+        async move {
+            // Get interfaces data
+            let interfaces_command = self.get_interfaces_command();
+            let interfaces_output = ssh_client.execute_command(&interfaces_command).await?;
+
+            // Get routes data
+            let routes_command = self.get_routes_command();
+            let routes_output = ssh_client.execute_command(&routes_command).await?;
+
+            // Parse the data using the existing ConfParser implementation
+            let mut parser = Cisco::new(
+                device_config.hostname.clone(),
+                None, // DeviceConfig doesn't have a name field
+                device_config.owner.clone(),
+                device_type,
+            );
+
+            parser.parse_interfaces(&interfaces_output)?;
+            parser.parse_routes(&routes_output)?;
+
+            let device = parser.build();
+
+            // Combine both outputs for config hash
+            let combined_config = format!(
+                "{}
+{}",
+                interfaces_output, routes_output
+            );
+            Ok(DeviceState::new(device, &combined_config))
         }
     }
 }
@@ -195,6 +259,7 @@ Loopback0 is up, line protocol is up
 "#;
 
         let mut parser = Cisco::new(
+            "cisco-test.example.com".to_string(),
             Some("cisco-test".to_string()),
             Owner::Named("Test Lab".to_string()),
             DeviceType::Switch,
@@ -249,6 +314,7 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
 "#;
 
         let mut parser = Cisco::new(
+            "cisco-test.example.com".to_string(),
             Some("cisco-test".to_string()),
             Owner::Named("Test Lab".to_string()),
             DeviceType::Router,
@@ -264,7 +330,7 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
         let default_routes: Vec<_> = device
             .routes
             .iter()
-            .filter(|route| matches!(route.route_type, RouteType::Default))
+            .filter(|route| matches!(route.route_type, RouteType::Default(_)))
             .collect();
         assert!(!default_routes.is_empty(), "Should have default route");
 
@@ -272,7 +338,7 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
         let specific_routes: Vec<_> = device
             .routes
             .iter()
-            .filter(|route| matches!(route.route_type, RouteType::Specific))
+            .filter(|route| matches!(route.route_type, RouteType::NextHop(_)))
             .collect();
         assert!(!specific_routes.is_empty(), "Should have specific routes");
 

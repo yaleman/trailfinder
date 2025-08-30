@@ -100,5 +100,12 @@ The application tries SSH config first, then falls back to manual config if SSH 
 ## Testing Data
 
 The project includes sample MikroTik configuration files that are used in tests. The parser functions expect MikroTik's specific command output format for interfaces and routes.
+
+## Current Development Tasks
+
+See TODO.md for the current development plan and task status.
+
 - no task is complete unless you can run 'just check' and there's no errors or warnings
 - when editing Cargo.toml always try to use cargo commands unless it's impossible
+- clean up TODO.md when commiting checked-off tasks
+- update TODO.md with tasks before and after they're done

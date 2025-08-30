@@ -1,6 +1,8 @@
 use std::{fmt::Display, net::IpAddr};
 
+use cidr::errors::NetworkParseError;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 pub mod brand;
 pub mod config;
@@ -32,7 +34,9 @@ impl From<String> for Owner {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {
-    pub name: String,
+    pub device_id: uuid::Uuid,
+    pub hostname: String,
+    pub name: Option<String>,
     pub owner: Owner,
     pub device_type: DeviceType,
     pub routes: Vec<Route>,
@@ -81,10 +85,23 @@ impl From<&str> for InterfaceType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub enum TrailFinderError {
     Parse(String),
     InvalidLine(String),
+    Regex(regex::Error),
+}
+
+impl From<regex::Error> for TrailFinderError {
+    fn from(err: regex::Error) -> Self {
+        TrailFinderError::Regex(err)
+    }
+}
+
+impl From<NetworkParseError> for TrailFinderError {
+    fn from(err: NetworkParseError) -> Self {
+        TrailFinderError::Parse(err.to_string())
+    }
 }
 
 impl std::fmt::Display for TrailFinderError {
@@ -92,6 +109,7 @@ impl std::fmt::Display for TrailFinderError {
         match self {
             TrailFinderError::Parse(msg) => write!(f, "Parse error: {}", msg),
             TrailFinderError::InvalidLine(msg) => write!(f, "Invalid line: {}", msg),
+            TrailFinderError::Regex(error) => write!(f, "Regex error: {}", error),
         }
     }
 }
@@ -100,6 +118,7 @@ impl std::error::Error for TrailFinderError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Interface {
+    pub interface_id: Uuid,
     pub name: String,
     pub vlan: Option<u16>,
     pub addresses: Vec<IpAddr>,
@@ -109,29 +128,57 @@ pub struct Interface {
 }
 
 impl Interface {
-    pub fn interface_id(&self, device_name: &str) -> String {
-        format!("{}:{}:{}", device_name, self.name, self.interface_type)
+    pub fn interface_id(&self, device_id: &uuid::Uuid) -> String {
+        format!("{}:{}:{}", device_id, self.name, self.interface_type)
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum RouteType {
-    Default,
-    Specific,
+    Default(Uuid),
+    /// Has a gateway
+    NextHop(Uuid),
+    /// Local to the interface (id)
+    Local(Uuid),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Route {
     pub route_type: RouteType,
-    pub interface_id: Option<String>,
+    pub target: cidr::IpCidr,
     pub gateway: Option<IpAddr>,
     pub distance: Option<u16>,
 }
 
+impl Route {
+    pub fn interface_id(&self) -> Uuid {
+        match self {
+            Route {
+                route_type: RouteType::Default(interface_id),
+                ..
+            } => *interface_id,
+            Route {
+                route_type: RouteType::NextHop(interface_id),
+                ..
+            } => *interface_id,
+            Route {
+                route_type: RouteType::Local(interface_id),
+                ..
+            } => *interface_id,
+        }
+    }
+}
+
 impl Device {
-    pub fn new(name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
-        let name = name.unwrap_or(uuid::Uuid::new_v4().to_string());
+    pub fn new(
+        hostname: String,
+        name: Option<String>,
+        owner: Owner,
+        device_type: DeviceType,
+    ) -> Self {
         Self {
+            device_id: uuid::Uuid::new_v4(),
+            hostname,
             name,
             owner,
             device_type,
@@ -140,9 +187,36 @@ impl Device {
         }
     }
 
+    pub fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.hostname)
+    }
+
     pub fn find_interface_by_id(&self, interface_id: &str) -> Option<&Interface> {
         self.interfaces
             .iter()
-            .find(|iface| iface.interface_id(&self.name) == interface_id)
+            .find(|iface| iface.interface_id(&self.device_id) == interface_id)
     }
+
+    pub fn with_routes(self, routes: Vec<Route>) -> Self {
+        Self { routes, ..self }
+    }
+    pub fn with_interfaces(self, interfaces: Vec<Interface>) -> Self {
+        Self { interfaces, ..self }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn setup_test_logging() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .with_level(true),
+        )
+        .with(tracing_subscriber::EnvFilter::new("debug"))
+        .try_init();
 }

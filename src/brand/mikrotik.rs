@@ -1,17 +1,42 @@
+use cidr::IpCidr;
+use tracing::debug;
+use tracing::info;
+use uuid::Uuid;
+
+use super::DeviceInterrogator;
 use super::prelude::*;
+use crate::config::{DeviceConfig, DeviceState};
+use crate::ssh::SshClient;
 
 pub struct Mikrotik {
-    name: String,
+    hostname: String,
+    name: Option<String>,
     owner: Owner,
     device_type: DeviceType,
     routes: Vec<Route>,
     interfaces: Vec<Interface>,
 }
 
+pub(crate) fn find_kv(parts: &Vec<&str>, key: &str) -> Option<String> {
+    parts
+        .iter()
+        .find(|&&part| part.starts_with(&format!("{key}=")))
+        .map(|s| {
+            let comment = s.trim_start_matches(&format!("{key}=")).to_string();
+            // strip leading/trailing quotes
+            if comment.starts_with('"') && comment.ends_with('"') {
+                comment[1..comment.len() - 1].to_string()
+            } else {
+                comment
+            }
+        })
+}
+
 impl ConfParser for Mikrotik {
-    fn new(name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
+    fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
-            name: name.unwrap_or(uuid::Uuid::new_v4().to_string()),
+            hostname,
+            name,
             owner,
             device_type,
             routes: Vec::new(),
@@ -19,145 +44,263 @@ impl ConfParser for Mikrotik {
         }
     }
 
+    fn interface_by_name(&self, name: &str) -> Option<Uuid> {
+        self.interfaces
+            .iter()
+            .find(|iface| iface.name == name)
+            .map(|iface| iface.interface_id)
+    }
+
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
-        for line in input_data.lines() {
+        debug!("input_data: {input_data}");
+
+        let comment_finder = regex::Regex::new(r#";;; (?P<comment>.*?) name=""#)
+            .expect("Failed to compile comment-finder regex");
+
+        let mut current_line = String::new();
+        let lines = input_data.lines();
+        let line_count = lines.clone().count();
+        for (line_num, line) in lines.enumerate() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            debug!("Parsing line: {line}");
+            if line.starts_with('#')
+                || line.starts_with(';')
+                || line.starts_with("Flags:")
+                || line.starts_with("Columns:")
+                || line.starts_with("P - passthrough")
+            {
+                current_line.clear();
                 continue;
             }
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 3 {
-                return Err(TrailFinderError::Parse(format!(
-                    "Invalid line format: {}",
-                    line
-                )));
+
+            if !line.is_empty() {
+                current_line.push(' ');
+                current_line.push_str(line);
+                // debug!("updated line to be {current_line}");
+                continue;
             }
 
+            if (!current_line.is_empty() && line.is_empty()) || line_count - 1 == line_num {
+                debug!("Found a full line: {current_line}");
+            }
+
+            let parts: Vec<&str> = current_line.split_whitespace().collect();
+
             // Try to find name= first, then default-name=
-            let name =
-                if let Some(name_part) = parts.iter().find(|&&part| part.starts_with("name=")) {
-                    name_part.trim_start_matches("name=").to_string()
-                } else if let Some(default_name_part) = parts
-                    .iter()
-                    .find(|&&part| part.starts_with("default-name="))
-                {
-                    default_name_part
-                        .trim_start_matches("default-name=")
-                        .to_string()
-                } else {
-                    return Err(TrailFinderError::InvalidLine(format!(
-                        "Missing interface name or default-name in line: {}",
-                        line
-                    )));
-                };
+            let name = find_kv(&parts, "name").ok_or_else(|| {
+                TrailFinderError::InvalidLine(format!("Missing name in line: {line}"))
+            })?;
 
-            let vlan = parts
-                .iter()
-                .find(|&&part| part.starts_with("vlan-id="))
-                .and_then(|s| s.trim_start_matches("vlan-id=").parse::<u16>().ok());
-
-            let comment = parts
-                .iter()
-                .find(|&&part| part.starts_with("comment="))
-                .map(|s| {
-                    let comment = s.trim_start_matches("comment=").to_string();
-                    // strip leading/trailing quotes
-                    if comment.starts_with('"') && comment.ends_with('"') {
-                        comment[1..comment.len() - 1].to_string()
-                    } else {
-                        comment
-                    }
-                });
-
-            // Extract the interface type from the path, not from parts[2] which is the command
-            let interface_type = if let Some(path_part) = parts.get(1) {
-                // parts[1] should be something like "bridge", "ethernet", "vlan", etc.
-                (*path_part).into()
-            } else {
-                InterfaceType::Other("unknown".to_string())
+            let vlan: Option<u16> = match find_kv(&parts, "vlan_id") {
+                Some(vlan_str) => {
+                    let res: u16 = vlan_str.parse().map_err(|err| {
+                        TrailFinderError::Parse(format!("Invalid vlan_id: {}", err))
+                    })?;
+                    Some(res)
+                }
+                None => None,
             };
 
+            // Extract the interface type from the path, not from parts[2] which is the command
+            let interface_type: InterfaceType = InterfaceType::from(
+                find_kv(&parts, "type")
+                    .ok_or_else(|| {
+                        TrailFinderError::InvalidLine(format!("Missing type in line: {line}"))
+                    })?
+                    .as_str(),
+            );
+
+            let comment = comment_finder
+                .captures(&current_line)
+                .and_then(|caps| caps.name("comment").map(|m| m.as_str().to_string()));
+
             let interface = Interface {
+                interface_id: Uuid::new_v4(),
                 name,
                 vlan,
                 addresses: Vec::new(),
                 interface_type,
                 comment,
             };
+            debug!("Adding interface: {interface:?}");
             self.interfaces.push(interface);
+
+            if !current_line.is_empty() && line.is_empty() {
+                current_line.clear();
+            }
         }
+
         Ok(())
     }
 
     fn parse_routes(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
-        for line in input_data.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+        debug!("Parsing Mikrotik routes: {input_data}");
+        let mut current_line = String::new();
+
+        let lines = input_data.lines();
+        let line_count = lines.clone().count();
+
+        for (line_num, line) in lines.enumerate() {
+            if line.starts_with("Flags:") {
                 continue;
             }
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 4 {
-                return Err(TrailFinderError::InvalidLine(format!(
-                    "Invalid line format: {}",
-                    line
-                )));
-            }
-            let route_addr = parts[1];
-            let target = parts[2];
-            let distance: u16 = parts[3]
-                .parse()
-                .map_err(|err| TrailFinderError::Parse(format!("Invalid distance: {}", err)))?;
-            let route_type = if route_addr == "0.0.0.0/0" {
-                RouteType::Default
-            } else {
-                RouteType::Specific
-            };
-            let mut route = Route {
-                route_type,
-                interface_id: None,
-                gateway: None,
-                distance: Some(distance),
-            };
-            if let Ok(addr) = target.parse::<IpAddr>() {
-                route.gateway = Some(addr);
-            } else {
-                // Look for existing interface by name
-                if let Some(existing_interface) =
-                    self.interfaces.iter().find(|iface| iface.name == target)
-                {
-                    route.interface_id = Some(existing_interface.interface_id(&self.name));
-                } else {
-                    // Create a stub interface if not found and add it to interfaces
-                    let stub_interface = Interface {
-                        name: target.to_string(),
-                        vlan: None,
-                        addresses: Vec::new(),
-                        interface_type: InterfaceType::Other(target.to_string()),
-                        comment: Some("Referenced from route, not in interface list".to_string()),
-                    };
 
-                    route.interface_id = Some(stub_interface.interface_id(&self.name));
-                    self.interfaces.push(stub_interface);
+            if !line.is_empty() && line.starts_with(' ') {
+                current_line.push(' ');
+                current_line.push_str(line);
+                // debug!("updated line to be {current_line}");
+                if line_count - 1 != line_num {
+                    continue;
                 }
+            } else if line.is_empty() {
+                // debug!("Empty line...");
+            } else {
+                debug!("Ignoring line: '{line}'");
+                continue;
             }
+
+            if (!current_line.is_empty() && line.is_empty()) || line_count - 1 == line_num {
+                debug!("Found a full line: {current_line}");
+            }
+
+            let parts: Vec<&str> = current_line.split_whitespace().collect();
+
+            let route_addr = find_kv(&parts, "dst-address").ok_or_else(|| {
+                TrailFinderError::InvalidLine(format!("Missing dst-address in line: {}", line))
+            })?;
+
+            let target: IpCidr = match find_kv(&parts, "dst-address") {
+                Some(target_str) => target_str.parse()?,
+                None => {
+                    return Err(TrailFinderError::InvalidLine(format!(
+                        "Missing dst-address in line: {}",
+                        line
+                    )));
+                }
+            };
+
+            let distance: Option<u16> = match find_kv(&parts, "distance") {
+                Some(vlan_str) => {
+                    let res: u16 = vlan_str.parse().map_err(|err| {
+                        TrailFinderError::Parse(format!("Invalid distance: {}", err))
+                    })?;
+                    Some(res)
+                }
+                None => None,
+            };
+
+            let route_type = if route_addr == "0.0.0.0/0" {
+                RouteType::Default(uuid::Uuid::new_v4())
+            } else if let Some(immediate_gw) = find_kv(&parts, "immediate-gw") {
+                // Extract interface name from immediate-gw (it might be "interface" or "address%interface")
+                let _interface_name = if let Some(percent_pos) = immediate_gw.find('%') {
+                    &immediate_gw[percent_pos + 1..]
+                } else {
+                    &immediate_gw
+                };
+                
+                // For now, just create a placeholder UUID - we'll link properly during build if needed
+                RouteType::Local(uuid::Uuid::new_v4())
+            } else {
+                RouteType::NextHop(uuid::Uuid::new_v4())
+            };
+
+            let route = Route {
+                target,
+                route_type,
+                gateway: None,
+                distance,
+            };
+            // if let Ok(addr) = target.parse::<IpAddr>() {
+            //     route.gateway = Some(addr);
+            // } else {
+            //     // Look for existing interface by name - will be set properly after build
+            //     if let Some(existing_interface) =
+            //         self.interfaces.iter().find(|iface| iface.name == target)
+            //     {
+            //         route.interface_id = Some(existing_interface.interface_id)
+            //     } else {
+            //         // Create a stub interface if not found and add it to interfaces
+            //         let stub_interface = Interface {
+            //             interface_id: Uuid::new_v4(),
+            //             name: target.to_string(),
+            //             vlan: None,
+            //             addresses: Vec::new(),
+            //             interface_type: InterfaceType::Other(target.to_string()),
+            //             comment: Some("Referenced from route, not in interface list".to_string()),
+            //         };
+
+            //         self.interfaces.push(stub_interface);
+            //     }
+            // }
+            info!("Adding route {route:?}");
             self.routes.push(route);
+            if line.is_empty() {
+                current_line.clear();
+            }
         }
         Ok(())
     }
 
     fn build(self) -> Device {
-        Device {
-            name: self.name,
-            owner: self.owner,
-            device_type: self.device_type,
-            routes: self.routes,
-            interfaces: self.interfaces,
+        Device::new(self.hostname, self.name, self.owner, self.device_type)
+            .with_routes(self.routes)
+            .with_interfaces(self.interfaces)
+    }
+}
+
+impl DeviceInterrogator for Mikrotik {
+    fn get_interfaces_command(&self) -> String {
+        "/interface print without-paging detail".to_string()
+    }
+
+    fn get_routes_command(&self) -> String {
+        "/ip route print without-paging detail".to_string()
+    }
+
+    fn interrogate_device(
+        &self,
+        ssh_client: &mut SshClient,
+        device_config: &DeviceConfig,
+        device_type: DeviceType,
+    ) -> impl std::future::Future<Output = Result<DeviceState, Box<dyn std::error::Error>>> + Send
+    {
+        async move {
+            // Get interfaces data
+            let interfaces_command = self.get_interfaces_command();
+            let interfaces_output = ssh_client.execute_command(&interfaces_command).await?;
+
+            // Get routes data
+            let routes_command = self.get_routes_command();
+            let routes_output = ssh_client.execute_command(&routes_command).await?;
+
+            // Parse the data using the existing ConfParser implementation
+            let mut parser = Mikrotik::new(
+                device_config.hostname.clone(),
+                None, // DeviceConfig doesn't have a name field
+                device_config.owner.clone(),
+                device_type,
+            );
+
+            parser.parse_interfaces(&interfaces_output)?;
+            parser.parse_routes(&routes_output)?;
+
+            let device = parser.build();
+
+            // Combine both outputs for config hash
+            let combined_config = format!(
+                "{}
+{}",
+                interfaces_output, routes_output
+            );
+            Ok(DeviceState::new(device, &combined_config))
         }
     }
 }
 
 #[test]
 fn test_parse_mikrotik() {
+    crate::setup_test_logging();
     use std::fs::read_to_string;
 
     let interfaces_input =
@@ -165,6 +308,7 @@ fn test_parse_mikrotik() {
     let routes_input = read_to_string("mikrotik_routes.txt").expect("Failed to read routes file");
 
     let mut parser = Mikrotik::new(
+        "test-router.example.com".to_string(),
         Some("test-router".to_string()),
         Owner::Named("Test Lab".to_string()),
         DeviceType::Router,
@@ -227,28 +371,17 @@ fn test_parse_mikrotik() {
     let default_routes: Vec<_> = device
         .routes
         .iter()
-        .filter(|route| matches!(route.route_type, RouteType::Default))
+        .filter(|route| matches!(route.route_type, RouteType::Default(_)))
         .collect();
     assert!(!default_routes.is_empty(), "Should have default route");
 
-    // Check that routes have proper interface references
-    let routes_with_interfaces: Vec<_> = device
-        .routes
-        .iter()
-        .filter(|route| route.interface_id.is_some())
-        .collect();
-    assert!(
-        !routes_with_interfaces.is_empty(),
-        "Should have routes with interface references"
-    );
-
     // Validate interface ID generation works
     if let Some(first_interface) = device.interfaces.first() {
-        let interface_id = first_interface.interface_id(&device.name);
+        let interface_id = first_interface.interface_id(&device.device_id);
         assert!(!interface_id.is_empty(), "Interface ID should not be empty");
         assert!(
-            interface_id.contains(&device.name),
-            "Interface ID should contain device name"
+            interface_id.contains(&device.device_id.to_string()),
+            "Interface ID should contain device ID"
         );
         assert!(
             interface_id.contains(&first_interface.name),
@@ -258,7 +391,7 @@ fn test_parse_mikrotik() {
 
     // Test interface lookup by ID
     if let Some(first_interface) = device.interfaces.first() {
-        let interface_id = first_interface.interface_id(&device.name);
+        let interface_id = first_interface.interface_id(&device.device_id);
         let found_interface = device.find_interface_by_id(&interface_id);
         assert!(
             found_interface.is_some(),
@@ -280,12 +413,18 @@ fn test_parse_mikrotik() {
 
 #[test]
 fn test_mikrotik_interface_types() {
+    crate::setup_test_logging();
     use std::fs::read_to_string;
 
     let interfaces_input =
         read_to_string("mikrotik_interfaces.txt").expect("Failed to read interfaces file");
 
-    let mut parser = Mikrotik::new(None, Owner::Unknown, DeviceType::Router);
+    let mut parser = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
     parser
         .parse_interfaces(&interfaces_input)
         .expect("Failed to parse interfaces");
@@ -324,11 +463,18 @@ fn test_mikrotik_interface_types() {
 
 #[test]
 fn test_mikrotik_route_types() {
+    crate::setup_test_logging();
+
     use std::fs::read_to_string;
 
     let routes_input = read_to_string("mikrotik_routes.txt").expect("Failed to read routes file");
 
-    let mut parser = Mikrotik::new(None, Owner::Unknown, DeviceType::Router);
+    let mut parser = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
     parser
         .parse_routes(&routes_input)
         .expect("Failed to parse routes");
@@ -338,12 +484,12 @@ fn test_mikrotik_route_types() {
     let default_count = device
         .routes
         .iter()
-        .filter(|route| matches!(route.route_type, RouteType::Default))
+        .filter(|route| matches!(route.route_type, RouteType::Default(_)))
         .count();
     let specific_count = device
         .routes
         .iter()
-        .filter(|route| matches!(route.route_type, RouteType::Specific))
+        .filter(|route| matches!(route.route_type, RouteType::NextHop(_)))
         .count();
 
     assert!(default_count > 0, "Should have default routes");

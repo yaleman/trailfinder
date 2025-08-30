@@ -1,32 +1,31 @@
-# MikroTik Routing Table Test Data
-# Generated from: /ip route print
-# Format: FLAGS DST-ADDRESS GATEWAY DISTANCE
-# Flags: D=Dynamic, A=Active, c=Connect, s=Static, r=RIP, b=BGP, o=OSPF, m=MME, B=Blackhole, U=Unreachable, P=Prohibit
+Flags: D - dynamic; X - disabled, I - inactive, A - active;
+c - connect, s - static, r - rip, b - bgp, o - ospf, i - is-is, d - dhcp, v - vpn, m - modem, y - bgp-mpls-vpn; H - hw-offloaded; + - ecmp
+ 0  Xs   ;;; sdfasdf
+         dst-address=254.128.128.128/32 routing-table=main gateway=255.255.255.128 distance=1 suppress-hw-offload=no
 
-# Default route via ISP gateway
-DAd 0.0.0.0/0           123.123.123.1         1
+   DAd   dst-address=0.0.0.0/0 routing-table=main gateway=123.123.123.1 immediate-gw=123.123.123.1%ether1 distance=1 scope=30 target-scope=10
+         vrf-interface=ether1
 
-# Connected networks - directly attached subnets
-DAc 10.0.0.0/24         vlan10                0
-DAc 10.0.5.0/24         vlan20                0
-DAc 10.0.40.0/24        vlan40                0
-DAc 10.0.43.0/24        wg-server             0
-DAc 10.0.99.0/24        vlan99                0
-DAc 10.1.0.0/24         ether2                0
-DAc 159.196.188.0/22    ether1                0
-DAc 192.168.88.0/24     bridge                0
-DAc 192.168.99.1/32     loopback0             0
+   DAc   dst-address=10.0.0.0/24 routing-table=main gateway=vlan10 immediate-gw=vlan10 distance=0 scope=10 target-scope=5
+         local-address=10.0.0.1%vlan10
 
-# Static routes for remote networks
-DAs 172.16.0.0/16       10.0.43.2             10
-DAs 192.168.100.0/24    wg-s2s                5
-DAs 10.10.0.0/16        123.123.123.132       20
+   DAc   dst-address=10.0.5.0/24 routing-table=main gateway=vlan20 immediate-gw=vlan20 distance=0 scope=10 target-scope=5
+         local-address=10.0.5.1%vlan20
 
-# VPN routes via WireGuard
-DAc 10.0.50.0/24        wg-s2s                0
+   DAc   dst-address=10.0.40.0/24 routing-table=main gateway=vlan40 immediate-gw=vlan40 distance=0 scope=10 target-scope=5
+         local-address=10.0.40.1%vlan40
 
-# Management routes
-DAc 172.31.0.0/24       vlan99                0
+   DAc   dst-address=10.0.43.0/24 routing-table=main gateway=wg1 immediate-gw=wg1 distance=0 scope=10 target-scope=5
+         local-address=10.0.43.1%wg1
 
-# Backup route (higher distance)
-DAs 0.0.0.0/0           123.123.123.1         10
+   DAc   dst-address=10.0.99.0/24 routing-table=main gateway=ether2 immediate-gw=ether2 distance=0 scope=10 target-scope=5
+         local-address=10.0.99.1%ether2
+
+   DAc   dst-address=123.123.120.0/22 routing-table=main gateway=ether1 immediate-gw=ether1 distance=0 scope=10 target-scope=5
+         local-address=123.123.123.5%ether1
+
+   DAc   dst-address=192.168.88.0/24 routing-table=main gateway=bridge immediate-gw=bridge distance=0 scope=10 target-scope=5
+         local-address=192.168.88.1%bridge
+
+   DAc   dst-address=192.168.99.1/32 routing-table=main gateway=lo immediate-gw=lo distance=0 scope=10 target-scope=5
+         local-address=192.168.99.1%lo

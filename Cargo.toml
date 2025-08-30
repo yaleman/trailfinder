@@ -18,4 +18,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 clap = { version = "4.5.46", features = ["derive"] }
 russh = "0.54.3"
 russh-keys = "0.44"
-async-trait = "0.1"
+regex = "1.11.2"
+cidr = { version = "0.3.1", features = ["serde"] }
+ssh-agent = "0.2.4"

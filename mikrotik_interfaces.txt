@@ -1,24 +1,58 @@
-# MikroTik Interface Configuration Test Data
-# Generated from: /interface print
-# This represents a typical RouterOS configuration export
+Flags: D - dynamic; X - disabled; I - inactive, R - running; S - slave; P - passthrough
+ 0   R   ;;; WAN
+         name="ether1" default-name="ether1" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:22
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:08 link-downs=1
 
-/interface bridge add admin-mac=78:9A:18:FF:88:98 auto-mac=no comment="Default bridge" name=bridge
-/interface bridge add comment="IoT devices bridge" name=bridge-iot protocol-mode=rstp
-/interface ethernet set [ find default-name=ether1 ] comment="WAN Connection" mac-address=78:9A:18:FF:88:99
-/interface ethernet set [ find default-name=ether2 ] comment="LAN Port 1" advertise=100M-baseT-half,100M-baseT-full,1G-baseT-half,1G-baseT-full
-/interface ethernet set [ find default-name=ether3 ] comment="Server Connection"
-/interface ethernet set [ find default-name=ether4 ] comment="Access Point Uplink" disabled=no
-/interface ethernet set [ find default-name=ether5 ] comment="Spare Port" disabled=yes
-/interface ethernet set [ find default-name=sfp-sfpplus1 ] comment="10G Uplink" advertise=1G-baseT-full,1G-baseX,2.5G-baseT,2.5G-baseX,5G-baseT,10G-baseT,10G-baseSR-LR,10G-baseCR l2mtu=9000 loop-protect=off
-/interface veth add address=10.200.200.200/24 gateway=10.200.200.1 gateway6="" name=mDNSveth comment="mDNS reflector interface"
-/interface wireguard add comment="VPN Server" listen-port=51821 mtu=1420 name=wg-server
-/interface wireguard add comment="Site-to-Site VPN" listen-port=51822 mtu=1420 name=wg-s2s
-/interface vlan add comment="WAN VLAN" interface=bridge name=vlan5 vlan-id=5
-/interface vlan add comment="Internal Network" interface=bridge loop-protect=off name=vlan10 vlan-id=10
-/interface vlan add comment="Guest Network" interface=bridge name=vlan20 vlan-id=20
-/interface vlan add comment="Management VLAN" interface=bridge name=vlan99 vlan-id=99
-/interface vlan add comment="Test Network" interface=bridge name=vlan40 vlan-id=40
-/interface vlan add comment="Streaming" disabled=yes interface=bridge name=vlan41 vlan-id=41
-/interface vlan add comment="Voice VLAN" interface=bridge name=vlan100 vlan-id=100
-/interface bridge add comment="DMZ Bridge" name=bridge-dmz
-/interface loopback add comment="Loopback interface" name=loopback0
+ 1   R   name="ether2" default-name="ether2" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:23
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:08 link-downs=1
+
+ 2    S  name="ether3" default-name="ether3" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:24
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 3    S  ;;; red cable
+         name="ether4" default-name="ether4" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:25
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 4    S  name="ether5" default-name="ether5" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:26
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 5    S  name="ether6" default-name="ether6" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:27
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 6    S  name="ether7" default-name="ether7" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:28
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 7    S  name="ether8" default-name="ether8" type="ether" mtu=1500 actual-mtu=1500 l2mtu=1514 max-l2mtu=9796 mac-address=FF:CC:BB:DD:AA:29
+         last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:04 link-downs=1
+
+ 8   RS  name="sfp-sfpplus1" default-name="sfp-sfpplus1" type="ether" mtu=1500 actual-mtu=1500 l2mtu=9000 max-l2mtu=9796
+         mac-address=FF:CC:BB:DD:AA:2A last-link-down-time=2025-07-09 07:27:05 last-link-up-time=2025-07-09 07:27:06 link-downs=1
+
+ 9   R   ;;; defconf
+         name="bridge" type="bridge" mtu=auto actual-mtu=1500 l2mtu=1514 mac-address=FF:CC:BB:DD:AA:23 last-link-up-time=2025-07-09 07:26:58
+         link-downs=0
+
+10   R   name="lo" type="loopback" mtu=65536 actual-mtu=65536 mac-address=00:00:00:00:00:00 last-link-up-time=2025-07-09 07:26:57 link-downs=0
+
+11   RS  name="mDNSveth" type="veth" mtu=1500 actual-mtu=1500 mac-address=FF:CC:BB:DD:AA:D8 last-link-up-time=2025-07-09 07:27:23 link-downs=0
+
+12   R   ;;; WAN
+         name="vlan5" type="vlan" mtu=1500 actual-mtu=1500 l2mtu=1510 mac-address=FF:CC:BB:DD:AA:23 last-link-up-time=2025-07-09 07:26:58
+         link-downs=0
+
+13   R   ;;; internal
+         name="vlan10" type="vlan" mtu=1500 actual-mtu=1500 l2mtu=1510 mac-address=FF:CC:BB:DD:AA:23 last-link-up-time=2025-07-09 07:26:58
+         link-downs=0
+
+14   R   ;;; guest
+         name="vlan20" type="vlan" mtu=1500 actual-mtu=1500 l2mtu=1510 mac-address=FF:CC:BB:DD:AA:23 last-link-up-time=2025-07-09 07:26:58
+         link-downs=0
+
+15   R   ;;; nvr
+         name="vlan40" type="vlan" mtu=1500 actual-mtu=1500 l2mtu=1510 mac-address=FF:CC:BB:DD:AA:23 last-link-up-time=2025-07-09 07:26:58
+         link-downs=0
+
+16  X    ;;; cameras
+         name="vlan41" type="vlan" mtu=1500 mac-address=FF:CC:BB:DD:AA:23 link-downs=0
+
+17   R   name="wg1" type="wg" mtu=1420 actual-mtu=1420 last-link-up-time=2025-07-09 07:26:58 link-downs=0
