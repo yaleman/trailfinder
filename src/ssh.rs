@@ -467,26 +467,42 @@ impl DeviceIdentifier {
     pub async fn identify_device(
         ssh_client: &mut SshClient,
     ) -> Result<(DeviceBrand, DeviceType), SshError> {
-        // Try to identify MikroTik first
-        match ssh_client.execute_command("/system health print").await {
+        // Try to identify MikroTik first using /system identity export
+        match ssh_client.execute_command("/system identity export").await {
             Ok(output) => {
-                debug!("MikroTik command output: '{}'", output.trim());
-                if output.contains("MikroTik") || output.contains("RouterOS") {
-                    let device_type =
-                        if output.contains("CCR") || output.contains("Cloud Core Router") {
-                            DeviceType::Router
-                        } else if output.contains("CRS") || output.contains("Cloud Router Switch") {
-                            DeviceType::Switch
-                        } else if output.contains("hAP") || output.contains("SXT") {
-                            DeviceType::AccessPoint
-                        } else {
-                            DeviceType::Router // Default for MikroTik
-                        };
+                debug!("MikroTik command '/system identity export' output: '{}'", output.trim());
+                if output.contains("RouterOS") || output.contains("SwOS") {
+                    // Try to get more specific device info for type detection
+                    let device_type = match ssh_client.execute_command("/system routerboard print").await {
+                        Ok(board_output) => {
+                            debug!("MikroTik board info: '{}'", board_output.trim());
+                            if board_output.contains("CCR") || board_output.contains("Cloud Core Router") {
+                                DeviceType::Router
+                            } else if board_output.contains("CRS") || board_output.contains("Cloud Router Switch") {
+                                DeviceType::Switch
+                            } else if board_output.contains("hAP") || board_output.contains("SXT") || 
+                                      board_output.contains("cAP") || board_output.contains("wAP") {
+                                DeviceType::AccessPoint
+                            } else if board_output.contains("RB") {
+                                DeviceType::Router // Default for RouterBoard devices
+                            } else {
+                                DeviceType::Router // Default fallback
+                            }
+                        }
+                        Err(_) => {
+                            // For SwOS devices, they're typically switches
+                            if output.contains("SwOS") {
+                                DeviceType::Switch
+                            } else {
+                                DeviceType::Router // Default for RouterOS
+                            }
+                        }
+                    };
                     return Ok((DeviceBrand::Mikrotik, device_type));
                 }
             }
             Err(e) => {
-                debug!("MikroTik identification failed: {}", e);
+                debug!("MikroTik identification with '/system identity export' failed: {}", e);
             }
         }
 
