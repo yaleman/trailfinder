@@ -9,11 +9,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
-use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::{debug, instrument, warn};
+use tower_http::{
+    services::ServeDir,
+    trace::{DefaultMakeSpan, TraceLayer},
+};
+use tracing::{Level, debug, instrument, warn};
 
-use crate::{Device, DeviceType, config::AppConfig};
+use crate::{Device, DeviceType, config::AppConfig, web::on_response::DefaultOnResponse};
 use uuid::Uuid;
+
+pub(crate) mod on_response;
 
 // Template structs
 #[derive(Template, WebTemplate)]
@@ -127,6 +132,14 @@ pub struct PathHop {
 }
 
 pub fn create_router(state: AppState) -> Router {
+    let tracelayer = TraceLayer::new_for_http()
+        .on_response(DefaultOnResponse::new())
+        .make_span_with(
+            DefaultMakeSpan::default()
+                .include_headers(false)
+                .level(Level::INFO),
+        );
+
     Router::new()
         // HTML page routes
         .route("/", get(serve_devices_page))
@@ -141,33 +154,33 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/pathfind", post(find_path))
         // Static assets
         .nest_service("/static", ServeDir::new("web/static"))
-        .layer(TraceLayer::new_for_http())
+        .layer(tracelayer)
         .with_state(state)
 }
 
 // HTML Page Handlers
-#[instrument]
+#[instrument(level = "info")]
 pub async fn serve_devices_page() -> impl IntoResponse {
     DevicesTemplate {
         page_name: "devices",
     }
 }
 
-#[instrument]
+#[instrument(level = "info")]
 pub async fn serve_topology_page() -> impl IntoResponse {
     TopologyTemplate {
         page_name: "topology",
     }
 }
 
-#[instrument]
+#[instrument(level = "info")]
 pub async fn serve_pathfinder_page() -> impl IntoResponse {
     PathfinderTemplate {
         page_name: "pathfinder",
     }
 }
 
-#[instrument(skip(state), fields(device_count))]
+#[instrument(skip(state), fields(device_count), level = "info")]
 pub async fn list_devices(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DeviceSummary>>, StatusCode> {
@@ -205,7 +218,7 @@ pub async fn list_devices(
     Ok(Json(devices))
 }
 
-#[instrument(skip(state), fields(hostname))]
+#[instrument(skip(state), fields(hostname), level = "info")]
 pub async fn get_device_details(
     Path(device_id): Path<Uuid>,
     State(state): State<AppState>,
@@ -227,7 +240,11 @@ pub async fn get_device_details(
     Err(StatusCode::NOT_FOUND)
 }
 
-#[instrument(skip(state), fields(device_count, connection_count, network_count))]
+#[instrument(
+    skip(state),
+    fields(device_count, connection_count, network_count),
+    level = "info"
+)]
 pub async fn get_network_topology(
     State(state): State<AppState>,
 ) -> Result<Json<NetworkTopology>, StatusCode> {
@@ -287,7 +304,7 @@ pub async fn get_network_topology(
         for route in &device_state.device.routes {
             if let Some(gateway_ip) = &route.gateway {
                 let mut gateway_found = false;
-                
+
                 // Look for devices that have this gateway IP as an interface
                 for other_device in &device_states {
                     if other_device.device.hostname == device_state.device.hostname {
@@ -311,7 +328,7 @@ pub async fn get_network_topology(
                         break;
                     }
                 }
-                
+
                 // If gateway not found in our devices, it's an external gateway
                 if !gateway_found {
                     connections.push(NetworkConnection {
@@ -327,7 +344,9 @@ pub async fn get_network_topology(
     }
 
     // Add internet node if there are any internet connections
-    let has_internet_connections = connections.iter().any(|conn| matches!(conn.connection_type, ConnectionType::Internet));
+    let has_internet_connections = connections
+        .iter()
+        .any(|conn| matches!(conn.connection_type, ConnectionType::Internet));
     if has_internet_connections {
         devices.push(NetworkDevice {
             device_id: "internet".to_string(),
@@ -351,7 +370,7 @@ pub async fn get_network_topology(
     Ok(Json(topology))
 }
 
-#[instrument(skip(state))]
+#[instrument(skip(state), level = "info")]
 pub async fn list_networks(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<NetworkSegment>>, StatusCode> {
@@ -361,7 +380,8 @@ pub async fn list_networks(
 
 #[instrument(
     skip(state, request),
-    fields(source_device, destination, success, hop_count)
+    fields(source_device, destination, success, hop_count),
+    level = "info"
 )]
 pub async fn find_path(
     State(state): State<AppState>,
@@ -406,7 +426,8 @@ pub async fn find_path(
 
 #[instrument(
     skip(state, request),
-    fields(source_ip, dest_network, device_states_loaded)
+    fields(source_ip, dest_network, device_states_loaded),
+    level = "info"
 )]
 async fn perform_pathfind(
     state: &AppState,
@@ -565,4 +586,3 @@ async fn perform_pathfind(
         Ok(path)
     }
 }
-

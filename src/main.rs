@@ -113,7 +113,7 @@ async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             fmt::layer()
-                .with_target(true)
+                .with_target(cli.debug)
                 .with_thread_ids(false)
                 .with_level(true),
         )
