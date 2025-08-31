@@ -71,6 +71,7 @@ SSH_PASSWORD=mypassword cargo run
 ### 3. View Results
 
 The application will:
+
 - Connect to each device via SSH
 - Identify the device brand and type
 - Update the `devices.json` file with discovered information
@@ -84,7 +85,7 @@ Trailfinder supports multiple authentication methods in priority order:
 
 Add devices to your `~/.ssh/config`:
 
-```
+```text
 Host router01
     HostName 192.168.1.1
     User admin
@@ -114,7 +115,7 @@ Set the `SSH_PASSWORD` environment variable for password-based auth (least secur
 - `hostname` - Device hostname for SSH config lookup
 - `ip_address` - IP address to connect to
 - `brand` - Device brand (auto-detected, can be `null`)
-- `device_type` - Device type (auto-detected, can be `null`) 
+- `device_type` - Device type (auto-detected, can be `null`)
 - `owner` - Device owner information
 - `ssh_username` - SSH username (optional if in SSH config)
 - `ssh_port` - SSH port (default: 22)
@@ -192,11 +193,11 @@ cargo clippy
 
 ## License
 
-[Add your license here]
+MPL2.0? I think.
 
 ## Contributing
 
-[Add contributing guidelines here]
+Please create issues for features or bugs! If you're looking to make a PR for a change, please create/note you're doing it in an issue so we can discuss implementation beforehand!
 
 ## Troubleshooting
 
@@ -218,3 +219,7 @@ cargo clippy
 - Check if device responds to identification commands
 - Review device-specific command output
 - Add debug logging to see raw command responses
+
+## Thanks
+
+- [d3](https://d3js.org) for visualisation (and cdnjs for [the mirror I grab things from](https://cdnjs.com/libraries/d3))

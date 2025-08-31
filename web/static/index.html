@@ -1,101 +1,110 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trailfinder - Network Discovery</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-</head>
-<body>
-    <header>
-        <h1>🔍 Trailfinder Network Discovery</h1>
-        <nav>
-            <button id="devices-tab" class="tab-button active">Devices</button>
-            <button id="topology-tab" class="tab-button">Network Topology</button>
-            <button id="pathfinder-tab" class="tab-button">Path Finder</button>
-        </nav>
-    </header>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Trailfinder - Network Discovery</title>
+        <link rel="stylesheet" href="style.css">
+        <script src="/static/d3.min.js"
+            integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A=="></script>
+    </head>
+    <body>
+        <header>
+            <h1>🔍 Trailfinder Network Discovery</h1>
+            <nav>
+                <button id="devices-tab"
+                    class="tab-button active">Devices</button>
+                <button id="topology-tab" class="tab-button">Network
+                    Topology</button>
+                <button id="pathfinder-tab" class="tab-button">Path
+                    Finder</button>
+            </nav>
+        </header>
 
-    <main>
-        <!-- Devices Tab -->
-        <div id="devices-view" class="tab-content active">
-            <div class="controls">
-                <input type="text" id="device-filter" placeholder="Filter devices...">
-                <button id="refresh-devices">🔄 Refresh</button>
+        <main>
+            <!-- Devices Tab -->
+            <div id="devices-view" class="tab-content active">
+                <div class="controls">
+                    <input type="text" id="device-filter"
+                        placeholder="Filter devices...">
+                    <button id="refresh-devices">🔄 Refresh</button>
+                </div>
+                <div id="devices-list" class="devices-grid">
+                    <div class="loading">Loading devices...</div>
+                </div>
             </div>
-            <div id="devices-list" class="devices-grid">
-                <div class="loading">Loading devices...</div>
-            </div>
-        </div>
 
-        <!-- Network Topology Tab -->
-        <div id="topology-view" class="tab-content">
-            <div class="controls">
-                <button id="refresh-topology">🔄 Refresh Topology</button>
-                <label>
-                    <input type="checkbox" id="show-networks"> Show Network Segments
-                </label>
-                <button id="reset-zoom">🎯 Reset Zoom</button>
+            <!-- Network Topology Tab -->
+            <div id="topology-view" class="tab-content">
+                <div class="controls">
+                    <button id="refresh-topology">🔄 Refresh Topology</button>
+                    <label>
+                        <input type="checkbox" id="show-networks"> Show Network
+                        Segments
+                    </label>
+                    <button id="reset-zoom">🎯 Reset Zoom</button>
+                </div>
+                <div id="topology-container">
+                    <svg id="topology-svg"></svg>
+                </div>
             </div>
-            <div id="topology-container">
-                <svg id="topology-svg"></svg>
-            </div>
-        </div>
 
-        <!-- Path Finder Tab -->
-        <div id="pathfinder-view" class="tab-content">
-            <div class="pathfinder-controls">
-                <div class="source-dest">
-                    <div class="endpoint">
-                        <h3>Source</h3>
-                        <div>
-                            <label>Device:</label>
-                            <select id="source-device">
-                                <option value="">Select device...</option>
-                            </select>
+            <!-- Path Finder Tab -->
+            <div id="pathfinder-view" class="tab-content">
+                <div class="pathfinder-controls">
+                    <div class="source-dest">
+                        <div class="endpoint">
+                            <h3>Source</h3>
+                            <div>
+                                <label>Device:</label>
+                                <select id="source-device">
+                                    <option value>Select device...</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Interface:</label>
+                                <select id="source-interface">
+                                    <option value>Select interface...</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Source IP:</label>
+                                <input type="text" id="source-ip"
+                                    placeholder="e.g., 192.168.1.10">
+                            </div>
                         </div>
-                        <div>
-                            <label>Interface:</label>
-                            <select id="source-interface">
-                                <option value="">Select interface...</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label>Source IP:</label>
-                            <input type="text" id="source-ip" placeholder="e.g., 192.168.1.10">
+
+                        <div class="endpoint">
+                            <h3>Destination</h3>
+                            <div>
+                                <label>Target IP/Network:</label>
+                                <input type="text" id="destination-ip"
+                                    placeholder="e.g., 10.0.0.1 or 192.168.2.0/24">
+                            </div>
                         </div>
                     </div>
 
-                    <div class="endpoint">
-                        <h3>Destination</h3>
-                        <div>
-                            <label>Target IP/Network:</label>
-                            <input type="text" id="destination-ip" placeholder="e.g., 10.0.0.1 or 192.168.2.0/24">
-                        </div>
+                    <button id="find-path" class="primary-button">🛣️ Find
+                        Path</button>
+                </div>
+
+                <div id="path-results">
+                    <div id="path-visualization"></div>
+                    <div id="path-details"></div>
+                </div>
+            </div>
+
+            <!-- Device Detail Modal -->
+            <div id="device-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close">&times;</span>
+                    <div id="device-detail-content">
+                        <div class="loading">Loading device details...</div>
                     </div>
                 </div>
-                
-                <button id="find-path" class="primary-button">🛣️ Find Path</button>
             </div>
+        </main>
 
-            <div id="path-results">
-                <div id="path-visualization"></div>
-                <div id="path-details"></div>
-            </div>
-        </div>
-
-        <!-- Device Detail Modal -->
-        <div id="device-modal" class="modal">
-            <div class="modal-content">
-                <span class="close">&times;</span>
-                <div id="device-detail-content">
-                    <div class="loading">Loading device details...</div>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <script src="app.js"></script>
-</body>
+        <script src="app.js"></script>
+    </body>
 </html>
