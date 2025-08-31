@@ -169,6 +169,12 @@ impl ConfParser for Mikrotik {
                 TrailFinderError::InvalidLine(format!("Missing dst-address in line: {}", line))
             })?;
 
+            if route_addr.to_ascii_lowercase().starts_with("fe80::") {
+                debug!("Ignoring link-local IPv6 address: {route_addr}");
+                current_line.clear();
+                continue;
+            }
+
             let target: IpCidr = match find_kv(&parts, "dst-address") {
                 Some(target_str) => target_str.parse()?,
                 None => {
@@ -255,7 +261,7 @@ impl DeviceInterrogator for Mikrotik {
     }
 
     fn get_routes_command(&self) -> String {
-        "/ip route print without-paging detail".to_string()
+        "/ipv6/route print detail without-paging; /ip route print detail without-paging".to_string()
     }
 
     #[allow(clippy::manual_async_fn)]
