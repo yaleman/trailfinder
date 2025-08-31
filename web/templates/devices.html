@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Devices - Trailfinder</title>
+        <link rel="stylesheet" href="/static/style.css">
+    </head>
+    <body>
+        <header>
+            <h1>🔍 Trailfinder - Network Devices</h1>
+            <nav>
+                <a href="/devices"
+                    class="nav-link tab-button active">Devices</a>
+                <a href="/topology" class="nav-link tab-button">Network
+                    Topology</a>
+                <a href="/pathfinder" class="nav-link tab-button">Path
+                    Finder</a>
+            </nav>
+        </header>
+
+        <main>
+            <div class="controls">
+                <input type="text" id="device-filter"
+                    placeholder="Filter devices...">
+                <button id="refresh-devices">🔄 Refresh</button>
+            </div>
+
+            <div id="devices-list" class="devices-grid">
+                <div class="loading">Loading devices...</div>
+            </div>
+
+            <!-- Device Detail Modal -->
+            <div id="device-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close">&times;</span>
+                    <div id="device-detail-content">
+                        <div class="loading">Loading device details...</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <script src="/static/devices.js"></script>
+    </body>
+</html>

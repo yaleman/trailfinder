@@ -12,7 +12,7 @@ use trailfinder::{
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     ssh::{DeviceIdentifier, SshClient},
-    web::{create_router, AppState},
+    web::{AppState, create_router},
 };
 
 /// Trailfinder - Network device discovery and configuration parsing tool
@@ -76,24 +76,24 @@ async fn web_server_command(
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
-    
+
     info!("Starting web server on {}:{}", address, port);
-    
+
     let state = AppState {
         config: Arc::new(app_config.clone()),
     };
-    
+
     let app = create_router(state);
-    
+
     let bind_addr = format!("{}:{}", address, port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    
+
     info!("🌐 Web UI available at: http://{}", bind_addr);
     info!("📊 API documentation at: http://{}/api", bind_addr);
     info!("Press Ctrl+C to stop the server");
-    
+
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }
 
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing subscriber with CLI options
     let env_filter_str = if cli.debug { "debug" } else { "info" };
 
-    let env_filter = EnvFilter::new(&format!(
+    let env_filter = EnvFilter::new(format!(
         "{env_filter_str},russh::client=info,russh::sshbuffer=info"
     ));
 

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Path Finder - Trailfinder{% endblock %}
+{% block page_title %}Trailfinder - Path Finder{% endblock %}
+
+{% block content %}
+<div class="pathfinder-controls">
+    <div class="source-dest">
+        <div class="endpoint">
+            <h3>Source</h3>
+            <div>
+                <label>Device:</label>
+                <select id="source-device">
+                    <option value="">Select device...</option>
+                </select>
+            </div>
+            <div>
+                <label>Interface:</label>
+                <select id="source-interface">
+                    <option value="">Select interface...</option>
+                </select>
+            </div>
+            <div>
+                <label>Source IP:</label>
+                <input type="text" id="source-ip" placeholder="e.g., 192.168.1.10">
+            </div>
+        </div>
+
+        <div class="endpoint">
+            <h3>Destination</h3>
+            <div>
+                <label>Target IP/Network:</label>
+                <input type="text" id="destination-ip" placeholder="e.g., 10.0.0.1 or 192.168.2.0/24">
+            </div>
+        </div>
+    </div>
+    
+    <button id="find-path" class="primary-button">🛣️ Find Path</button>
+</div>
+
+<div id="path-results">
+    <div id="path-visualization"></div>
+    <div id="path-details"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/pathfinder.js"></script>
+{% endblock %}

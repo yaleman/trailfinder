@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Network Topology - Trailfinder{% endblock %}
+{% block page_title %}Trailfinder - Network Topology{% endblock %}
+
+{% block extra_head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="controls">
+    <button id="refresh-topology">🔄 Refresh Topology</button>
+    <label>
+        <input type="checkbox" id="show-networks"> Show Network Segments
+    </label>
+    <button id="reset-zoom">🎯 Reset Zoom</button>
+</div>
+
+<div id="topology-container">
+    <svg id="topology-svg"></svg>
+</div>
+
+<!-- Device Detail Modal -->
+<div id="device-modal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div id="device-detail-content">
+            <div class="loading">Loading device details...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/topology.js"></script>
+{% endblock %}

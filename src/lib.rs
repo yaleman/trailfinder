@@ -122,10 +122,9 @@ pub struct Interface {
     pub interface_id: Uuid,
     pub name: String,
     pub vlan: Option<u16>,
-    pub addresses: Vec<IpAddr>,
+    pub addresses: Vec<IpAddr>, // TODO: these should be CIDR's because addresses have subnet masks
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
-    // TODO: do we want to have gateways here?
 }
 
 impl Interface {

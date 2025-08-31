@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Devices - Trailfinder{% endblock %}
+{% block page_title %}Trailfinder - Network Devices{% endblock %}
+
+{% block content %}
+<div class="controls">
+    <input type="text" id="device-filter" placeholder="Filter devices...">
+    <button id="refresh-devices">🔄 Refresh</button>
+</div>
+
+<div id="devices-list" class="devices-grid">
+    <div class="loading">Loading devices...</div>
+</div>
+
+<!-- Device Detail Modal -->
+<div id="device-modal" class="modal">
+    <div class="modal-content">
+        <span class="close">&times;</span>
+        <div id="device-detail-content">
+            <div class="loading">Loading device details...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/devices.js"></script>
+{% endblock %}

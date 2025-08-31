@@ -24,4 +24,6 @@ ssh-agent = "0.2.4"
 axum = { version = "0.8.4", features = ["http2"] }
 tokio-util = "0.7.16"
 tower = "0.5.2"
-tower-http = { version = "0.6.6", features = ["fs"] }
+tower-http = { version = "0.6.6", features = ["fs", "trace"] }
+askama = "0.14.0"
+askama_web = { version = "0.14.6", features = ["axum-0.8"] }

@@ -9,19 +9,23 @@ Trailfinder is a Rust application for network device discovery and configuration
 ## Commands
 
 ### Building
-- `cargo build` - Build the project
-- `cargo run` - Run the main application
+
+- `cargo build --quiet` - Build the project
+- `cargo run --quiet` - Run the main application
 
 ### Testing
-- `cargo test` - Run all tests
-- `cargo test test_parse_mikrotik` - Run specific test
+
+- `cargo test --quiet` - Run all tests
+- `cargo test --quiet test_parse_mikrotik` - Run specific test
 
 ### Development
-- `cargo check` - Fast compile check without producing binaries
+
+- `cargo check --quiet` - Fast compile check without producing binaries
 - `cargo clippy` - Lint checker
 - `cargo fmt` - Format code
 
 ### Logging
+
 The application uses structured logging via the `tracing` crate. Log levels can be controlled with the `RUST_LOG` environment variable:
 
 - `RUST_LOG=error` - Only show errors (minimal output)
@@ -30,9 +34,10 @@ The application uses structured logging via the `tracing` crate. Log levels can 
 - `RUST_LOG=trace` - Show maximum verbosity (not currently used)
 
 Examples:
+
 - `cargo run` - Run with default INFO level logging
-- `RUST_LOG=debug cargo run` - Run with detailed debugging
-- `RUST_LOG=error ./target/release/trailfinder` - Run release build with minimal output
+- `cargo run -- --debug` - Run with detailed debugging
+- `cargo run` - Run release build with minimal output
 
 ## Architecture
 
@@ -64,6 +69,7 @@ The codebase follows a standard Rust library + binary structure:
 ## Device Configuration
 
 The application uses a `devices.json` file to store device inventory. Each device entry includes:
+
 - Hostname and IP address  
 - SSH connection details (username, port, key path)
 - Authentication preferences (ssh-agent, identity files)
@@ -78,7 +84,7 @@ The application supports multiple SSH authentication methods in priority order:
    - Username from `User` directive
    - Identity files from `IdentityFile` directive  
    - ssh-agent usage based on `IdentitiesOnly` setting
-   
+
 2. **Manual Configuration** - Fallback to device-specific settings:
    - ssh-agent authentication (default: enabled)
    - SSH key file authentication
@@ -110,3 +116,4 @@ See TODO.md for the current development plan and task status.
 - clean up TODO.md when commiting checked-off tasks
 - update TODO.md with tasks before and after they're done
 - if wanting to test the app, just use cargo run rather than cargo build then running the binary
+- always use a todo list when working on complex tasks to track progress and remain on track

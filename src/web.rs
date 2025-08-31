@@ -1,19 +1,38 @@
+use askama::Template;
+use askama_web::WebTemplate;
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{get, post},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
-use tower_http::services::ServeDir;
+use tower_http::{services::ServeDir, trace::TraceLayer};
+use tracing::{debug, instrument, warn};
 
-use crate::{
-    config::AppConfig,
-    Device, DeviceType,
-};
+use crate::{Device, DeviceType, config::AppConfig};
 use uuid::Uuid;
+
+// Template structs
+#[derive(Template, WebTemplate)]
+#[template(path = "devices.html")]
+struct DevicesTemplate {
+    page_name: &'static str,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "topology.html")]
+struct TopologyTemplate {
+    page_name: &'static str,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "pathfinder.html")]
+struct PathfinderTemplate {
+    page_name: &'static str,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,8 +50,6 @@ pub struct DeviceSummary {
     pub route_count: usize,
     pub last_seen: Option<String>,
 }
-
-// DeviceDetail struct removed - we'll use Device directly
 
 #[derive(Serialize)]
 pub struct NetworkTopology {
@@ -78,15 +95,16 @@ pub struct NetworkSegment {
     pub devices: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct PathFindRequest {
     pub source: PathEndpoint,
     pub destination: PathEndpoint,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct PathEndpoint {
     pub device: Option<String>,
+    pub device_id: Option<String>,
     pub interface: Option<String>,
     pub ip: Option<String>,
 }
@@ -109,15 +127,46 @@ pub struct PathHop {
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        // HTML page routes
+        .route("/", get(serve_devices_page))
+        .route("/devices", get(serve_devices_page))
+        .route("/topology", get(serve_topology_page))
+        .route("/pathfinder", get(serve_pathfinder_page))
+        // API routes
         .route("/api/devices", get(list_devices))
         .route("/api/devices/{device_id}", get(get_device_details))
         .route("/api/topology", get(get_network_topology))
         .route("/api/networks", get(list_networks))
         .route("/api/pathfind", post(find_path))
-        .fallback_service(ServeDir::new("web/static"))
+        // Static assets
+        .nest_service("/static", ServeDir::new("web/static"))
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
+// HTML Page Handlers
+#[instrument]
+pub async fn serve_devices_page() -> impl IntoResponse {
+    DevicesTemplate {
+        page_name: "devices",
+    }
+}
+
+#[instrument]
+pub async fn serve_topology_page() -> impl IntoResponse {
+    TopologyTemplate {
+        page_name: "topology",
+    }
+}
+
+#[instrument]
+pub async fn serve_pathfinder_page() -> impl IntoResponse {
+    PathfinderTemplate {
+        page_name: "pathfinder",
+    }
+}
+
+#[instrument(skip(state), fields(device_count))]
 pub async fn list_devices(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DeviceSummary>>, StatusCode> {
@@ -125,7 +174,7 @@ pub async fn list_devices(
 
     for device_config in &state.config.devices {
         let device_state = state.config.load_device_state(&device_config.hostname);
-        
+
         let (interface_count, route_count, last_updated, device_id) = match device_state {
             Ok(state) => (
                 state.device.interfaces.len(),
@@ -133,7 +182,10 @@ pub async fn list_devices(
                 Some(state.timestamp.clone()),
                 state.device.device_id.to_string(),
             ),
-            Err(_) => (0, 0, None, uuid::Uuid::new_v4().to_string()),
+            Err(e) => {
+                debug!(hostname = %device_config.hostname, error = %e, "Failed to load device state");
+                (0, 0, None, uuid::Uuid::new_v4().to_string())
+            }
         };
 
         devices.push(DeviceSummary {
@@ -148,26 +200,33 @@ pub async fn list_devices(
         });
     }
 
+    tracing::Span::current().record("device_count", devices.len());
     Ok(Json(devices))
 }
 
+#[instrument(skip(state), fields(hostname))]
 pub async fn get_device_details(
     Path(device_id): Path<Uuid>,
     State(state): State<AppState>,
 ) -> Result<Json<Device>, StatusCode> {
-    
+    debug!(%device_id, "Looking up device details");
+
     // Find the device by searching through all device states
     for device_config in &state.config.devices {
         if let Ok(device_state) = state.config.load_device_state(&device_config.hostname) {
             if device_state.device.device_id == device_id {
+                tracing::Span::current().record("hostname", &device_state.device.hostname);
+                debug!(hostname = %device_state.device.hostname, "Found device");
                 return Ok(Json(device_state.device));
             }
         }
     }
 
+    warn!(%device_id, "Device not found");
     Err(StatusCode::NOT_FOUND)
 }
 
+#[instrument(skip(state), fields(device_count, connection_count, network_count))]
 pub async fn get_network_topology(
     State(state): State<AppState>,
 ) -> Result<Json<NetworkTopology>, StatusCode> {
@@ -198,25 +257,28 @@ pub async fn get_network_topology(
         for interface in &device_state.device.interfaces {
             for address in &interface.addresses {
                 // Create network segment entry
-                let network_key = format!("{}/{}", 
-                    match address {
-                        std::net::IpAddr::V4(ip) => {
-                            // Approximate network by zeroing last octet
-                            let octets = ip.octets();
-                            format!("{}.{}.{}.0", octets[0], octets[1], octets[2])
-                        },
-                        std::net::IpAddr::V6(_) => address.to_string(), // TODO: handle IPv6 properly
-                    },
-                    if interface.vlan.is_some() { "24" } else { "24" } // TODO: proper CIDR detection
-                );
-
-                let segment = networks.entry(network_key.clone()).or_insert_with(|| {
-                    NetworkSegment {
-                        network: network_key,
-                        vlan_id: interface.vlan,
-                        devices: Vec::new(),
+                // TODO: proper CIDR detection
+                let network_key = match address {
+                    std::net::IpAddr::V4(ip) => {
+                        // Approximate network by zeroing last octet
+                        let octets = ip.octets();
+                        format!(
+                            "{}/{}",
+                            format!("{}.{}.{}.0", octets[0], octets[1], octets[2]),
+                            24
+                        )
                     }
-                });
+                    std::net::IpAddr::V6(_) => format!("{}/{}", address.to_string(), 64), // TODO: handle IPv6 properly
+                };
+
+                let segment =
+                    networks
+                        .entry(network_key.clone())
+                        .or_insert_with(|| NetworkSegment {
+                            network: network_key,
+                            vlan_id: interface.vlan,
+                            devices: Vec::new(),
+                        });
 
                 if !segment.devices.contains(&device_state.device.hostname) {
                     segment.devices.push(device_state.device.hostname.clone());
@@ -232,7 +294,7 @@ pub async fn get_network_topology(
                     if other_device.device.hostname == device_state.device.hostname {
                         continue;
                     }
-                    
+
                     for other_interface in &other_device.device.interfaces {
                         if other_interface.addresses.contains(gateway_ip) {
                             connections.push(NetworkConnection {
@@ -255,9 +317,15 @@ pub async fn get_network_topology(
         networks: networks.into_values().collect(),
     };
 
+    let span = tracing::Span::current();
+    span.record("device_count", topology.devices.len());
+    span.record("connection_count", topology.connections.len());
+    span.record("network_count", topology.networks.len());
+
     Ok(Json(topology))
 }
 
+#[instrument(skip(state))]
 pub async fn list_networks(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<NetworkSegment>>, StatusCode> {
@@ -265,14 +333,29 @@ pub async fn list_networks(
     Ok(Json(topology.0.networks))
 }
 
+#[instrument(
+    skip(state, request),
+    fields(source_device, destination, success, hop_count)
+)]
 pub async fn find_path(
     State(state): State<AppState>,
     Json(request): Json<PathFindRequest>,
 ) -> Result<Json<PathFindResponse>, StatusCode> {
-    // Basic pathfinding implementation
+    // Record request details in span
+    if let Some(ref device) = request.source.device {
+        tracing::Span::current().record("source_device", device);
+    }
+    if let Some(ref dest) = request.destination.ip {
+        tracing::Span::current().record("destination", dest);
+    }
+
     match perform_pathfind(&state, request).await {
         Ok(path) => {
             let hop_count = path.len();
+            let span = tracing::Span::current();
+            span.record("success", true);
+            span.record("hop_count", hop_count);
+
             Ok(Json(PathFindResponse {
                 path,
                 total_hops: hop_count,
@@ -280,27 +363,45 @@ pub async fn find_path(
                 error: None,
             }))
         }
-        Err(error) => Ok(Json(PathFindResponse {
-            path: Vec::new(),
-            total_hops: 0,
-            success: false,
-            error: Some(error),
-        })),
+        Err(error) => {
+            let span = tracing::Span::current();
+            span.record("success", false);
+            warn!(error = %error, "Pathfinding failed");
+
+            Ok(Json(PathFindResponse {
+                path: Vec::new(),
+                total_hops: 0,
+                success: false,
+                error: Some(error),
+            }))
+        }
     }
 }
 
+#[instrument(
+    skip(state, request),
+    fields(source_ip, dest_network, device_states_loaded)
+)]
 async fn perform_pathfind(
     state: &AppState,
     request: PathFindRequest,
 ) -> Result<Vec<PathHop>, String> {
-    use std::net::IpAddr;
     use cidr::IpCidr;
+    use std::net::IpAddr;
 
     // Parse destination IP/network
-    let dest_network: IpCidr = request.destination.ip
+    let dest_network: IpCidr = request
+        .destination
+        .ip
         .ok_or("No destination IP specified")?
         .parse()
         .map_err(|e| format!("Invalid destination IP/network: {}", e))?;
+
+    tracing::Span::current().record("dest_network", dest_network.to_string());
+
+    if let Some(ref source_ip) = request.source.ip {
+        tracing::Span::current().record("source_ip", source_ip);
+    }
 
     // Load all device states
     let mut device_states = Vec::new();
@@ -310,30 +411,53 @@ async fn perform_pathfind(
         }
     }
 
+    tracing::Span::current().record("device_states_loaded", device_states.len());
+
     // Find the source device if specified
     let source_device = if let Some(source_hostname) = &request.source.device {
-        device_states.iter().find(|ds| ds.device.hostname == *source_hostname)
+        device_states
+            .iter()
+            .find(|ds| ds.device.hostname == *source_hostname)
             .ok_or(format!("Source device '{}' not found", source_hostname))?
+    } else if let Some(source_device_id) = &request.source.device_id {
+        let device_id = uuid::Uuid::parse_str(source_device_id)
+            .map_err(|e| format!("Invalid source device ID: {}", e))?;
+        device_states
+            .iter()
+            .find(|ds| ds.device.device_id == device_id)
+            .ok_or(format!(
+                "Source device with ID '{}' not found",
+                source_device_id
+            ))?
     } else if let Some(source_ip_str) = &request.source.ip {
-        let source_ip: IpAddr = source_ip_str.parse()
+        let source_ip: IpAddr = source_ip_str
+            .parse()
             .map_err(|e| format!("Invalid source IP: {}", e))?;
-        
+
         // Find device with this IP on any interface
-        device_states.iter().find(|ds| {
-            ds.device.interfaces.iter().any(|iface| iface.addresses.contains(&source_ip))
-        }).ok_or("No device found with the specified source IP")?
+        device_states
+            .iter()
+            .find(|ds| {
+                ds.device
+                    .interfaces
+                    .iter()
+                    .any(|iface| iface.addresses.contains(&source_ip))
+            })
+            .ok_or("No device found with the specified source IP")?
     } else {
-        return Err("Must specify either source device or source IP".to_string());
+        return Err(
+            "Must specify either source device, source device ID, or source IP".to_string(),
+        );
     };
 
     // Simple pathfinding: look for routes to the destination
     let mut path = Vec::new();
     let mut current_device = source_device;
     let mut visited_devices = std::collections::HashSet::new();
-    
+
     // Maximum hops to prevent infinite loops
     let max_hops = 10;
-    
+
     for _hop_count in 0..max_hops {
         // Check if we've been to this device before (loop prevention)
         if visited_devices.contains(&current_device.device.hostname) {
@@ -347,17 +471,16 @@ async fn perform_pathfind(
             if dest_network == route.target {
                 return true;
             }
-            
+
             // Extract IP from CIDR notation and check if it's contained in the route
             let dest_str = dest_network.to_string();
-            if let Some(ip_part) = dest_str.split('/').next() {
-                if let Ok(dest_ip) = ip_part.parse::<IpAddr>() {
-                    if route.target.contains(&dest_ip) {
-                        return true;
-                    }
-                }
+            if let Some(ip_part) = dest_str.split('/').next()
+                && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+                && route.target.contains(&dest_ip)
+            {
+                return true;
             }
-            
+
             // Check for default routes (0.0.0.0/0 or ::/0)
             route.target.to_string() == "0.0.0.0/0" || route.target.to_string() == "::/0"
         });
@@ -367,14 +490,16 @@ async fn perform_pathfind(
             None => {
                 return Err(format!(
                     "No route found to {} from device {}",
-                    dest_network,
-                    current_device.device.hostname
+                    dest_network, current_device.device.hostname
                 ));
             }
         };
 
         // Determine the exit interface for this route
-        let exit_interface = current_device.device.interfaces.iter()
+        let exit_interface = current_device
+            .device
+            .interfaces
+            .iter()
             .find(|iface| iface.interface_id == route.interface_id())
             .map(|iface| iface.name.clone())
             .unwrap_or_else(|| "unknown".to_string());
@@ -390,7 +515,10 @@ async fn perform_pathfind(
         // If this route has a gateway, try to find the next device
         if let Some(gateway_ip) = route.gateway {
             let next_device = device_states.iter().find(|ds| {
-                ds.device.interfaces.iter().any(|iface| iface.addresses.contains(&gateway_ip))
+                ds.device
+                    .interfaces
+                    .iter()
+                    .any(|iface| iface.addresses.contains(&gateway_ip))
             });
 
             if let Some(next_dev) = next_device {
