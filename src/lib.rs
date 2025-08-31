@@ -160,17 +160,52 @@ impl std::fmt::Display for TrailFinderError {
 
 impl std::error::Error for TrailFinderError {}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceAddress {
+    pub ip: IpAddr,
+    pub prefix_length: u8,
+}
+
+impl InterfaceAddress {
+    pub fn new(ip: IpAddr, prefix_length: u8) -> Self {
+        Self { ip, prefix_length }
+    }
+
+    pub fn from_cidr(cidr: &cidr::IpCidr) -> Self {
+        Self {
+            ip: cidr.first_address(),
+            prefix_length: cidr.network_length(),
+        }
+    }
+
+    pub fn to_cidr(&self) -> Result<cidr::IpCidr, cidr::errors::NetworkParseError> {
+        match self.ip {
+            IpAddr::V4(ipv4) => cidr::Ipv4Cidr::new(ipv4, self.prefix_length).map(cidr::IpCidr::V4),
+            IpAddr::V6(ipv6) => cidr::Ipv6Cidr::new(ipv6, self.prefix_length).map(cidr::IpCidr::V6),
+        }
+    }
+}
+
+impl Display for InterfaceAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.ip, self.prefix_length)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Interface {
     pub interface_id: Uuid,
     pub name: String,
     pub vlans: Vec<u16>,
-    pub addresses: Vec<IpAddr>, // TODO: these should be CIDR's because addresses have subnet masks
+    pub addresses: Vec<InterfaceAddress>,
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
 
+    /// Storing neighbour discovery data
     neighbour_string_data: HashMap<String, String>,
-    peer: Option<Uuid>,
+    /// This stores the peers discovered by CDP and anything else we can figure out
+    /// 0 is without vlan, everything else is a vlan-peer
+    peers: HashMap<u16, Vec<Uuid>>,
 }
 
 impl Interface {
@@ -178,7 +213,7 @@ impl Interface {
         interface_id: Uuid,
         name: String,
         vlans: Vec<u16>,
-        addresses: Vec<IpAddr>,
+        addresses: Vec<InterfaceAddress>,
         interface_type: InterfaceType,
         comment: Option<String>,
     ) -> Self {
@@ -190,7 +225,7 @@ impl Interface {
             interface_type,
             comment,
             neighbour_string_data: Default::default(),
-            peer: None,
+            peers: Default::default(),
         }
     }
 

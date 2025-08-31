@@ -103,7 +103,7 @@ impl DeviceHandler for Cisco {
                     interface_type,
                     comment: None,
                     neighbour_string_data: Default::default(),
-                    peer: None,
+                    peers: Default::default(),
                 };
 
                 self.interfaces.push(interface);

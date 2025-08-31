@@ -13,7 +13,7 @@ use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
 };
-use tracing::{Level, debug, instrument, warn};
+use tracing::{Level, debug, info, instrument, warn};
 
 use crate::{Device, DeviceType, config::AppConfig, web::on_response::DefaultOnResponse};
 use uuid::Uuid;
@@ -276,13 +276,20 @@ pub async fn get_network_topology(
             for address in &interface.addresses {
                 // Create network segment entry
                 // TODO: proper CIDR detection
-                let network_key = match address {
+                let network_key = match address.ip {
                     std::net::IpAddr::V4(ip) => {
-                        // Approximate network by zeroing last octet
+                        // Use the actual prefix length from the interface address
                         let octets = ip.octets();
-                        format!("{}.{}.{}.0/{}", octets[0], octets[1], octets[2], 24)
+                        if address.prefix_length <= 24 {
+                            format!(
+                                "{}.{}.{}.0/{}",
+                                octets[0], octets[1], octets[2], address.prefix_length
+                            )
+                        } else {
+                            format!("{}/{}", address.ip, address.prefix_length)
+                        }
                     }
-                    std::net::IpAddr::V6(_) => format!("{}/{}", address, 64), // TODO: handle IPv6 properly
+                    std::net::IpAddr::V6(_) => format!("{}/{}", address.ip, address.prefix_length),
                 };
 
                 if !interface.vlans.is_empty() {
@@ -332,7 +339,11 @@ pub async fn get_network_topology(
                     }
 
                     for other_interface in &other_device.device.interfaces {
-                        if other_interface.addresses.contains(gateway_ip) {
+                        if other_interface
+                            .addresses
+                            .iter()
+                            .any(|addr| &addr.ip == gateway_ip)
+                        {
                             connections.push(NetworkConnection {
                                 from: device_state.device.device_id.to_string(),
                                 to: other_device.device.device_id.to_string(),
@@ -508,7 +519,7 @@ async fn perform_pathfind(
                 ds.device
                     .interfaces
                     .iter()
-                    .any(|iface| iface.addresses.contains(&source_ip))
+                    .any(|iface| iface.addresses.iter().any(|addr| addr.ip == source_ip))
             })
             .ok_or("No device found with the specified source IP")?
     } else {
@@ -585,7 +596,7 @@ async fn perform_pathfind(
                 ds.device
                     .interfaces
                     .iter()
-                    .any(|iface| iface.addresses.contains(&gateway_ip))
+                    .any(|iface| iface.addresses.iter().any(|addr| addr.ip == gateway_ip))
             });
 
             if let Some(next_dev) = next_device {
@@ -605,4 +616,31 @@ async fn perform_pathfind(
     } else {
         Ok(path)
     }
+}
+
+/// Start the web server with the given configuration and bind address/port
+/// This function is used by both the CLI and tests
+pub async fn web_server_command(
+    app_config: &AppConfig,
+    address: &str,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting web server on {}:{}", address, port);
+
+    let state = AppState {
+        config: Arc::new(app_config.clone()),
+    };
+
+    let app = create_router(state);
+
+    let bind_addr = format!("{}:{}", address, port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+
+    info!("🌐 Web UI available at: http://{}", bind_addr);
+    info!("📊 API documentation at: http://{}/api", bind_addr);
+    info!("Press Ctrl+C to stop the server");
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }

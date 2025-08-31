@@ -225,7 +225,10 @@ function createInterfacesSection(interfaces) {
 
         // IP Addresses
         const addressesCell = document.createElement('td');
-        addressesCell.textContent = iface.addresses.join(', ') || 'None';
+        const addressesDisplay = iface.addresses.length > 0 
+            ? iface.addresses.map(addr => `${addr.ip}/${addr.prefix_length}`).join(', ')
+            : 'None';
+        addressesCell.textContent = addressesDisplay;
         row.appendChild(addressesCell);
 
         // Comment

@@ -159,7 +159,7 @@ function renderDeviceDetails(device) {
                 <td>${iface.name}</td>
                 <td><span class="interface-type ${interfaceClass}">${interfaceType}</span></td>
                 <td>${vlansDisplay}</td>
-                <td>${iface.addresses.join(', ') || 'None'}</td>
+                <td>${iface.addresses.length > 0 ? iface.addresses.map(addr => `${addr.ip}/${addr.prefix_length}`).join(', ') : 'None'}</td>
                 <td>${iface.comment || ''}</td>
             </tr>
         `;

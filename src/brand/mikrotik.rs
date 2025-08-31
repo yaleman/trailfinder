@@ -123,7 +123,7 @@ impl DeviceHandler for Mikrotik {
                 interface_type,
                 comment,
                 neighbour_string_data: Default::default(),
-                peer: None,
+                peers: Default::default(),
             };
             debug!("Adding interface: {interface:?}");
             self.interfaces.push(interface);
@@ -318,7 +318,11 @@ impl DeviceHandler for Mikrotik {
 
                     // try and find the peer identity in the devices list
                     if let Some(peer) = devices.iter().find(|p| p.hostname == peer_identity) {
-                        existing_interface.peer = Some(peer.device_id);
+                        existing_interface
+                            .peers
+                            .entry(0)
+                            .or_default()
+                            .push(peer.device_id);
                         mods_made += 1;
                     }
                 } else {

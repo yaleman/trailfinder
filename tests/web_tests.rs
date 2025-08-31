@@ -3,7 +3,9 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use trailfinder::config::DeviceState;
 use trailfinder::web::*;
-use trailfinder::{Device, DeviceType, Interface, InterfaceType, Owner, Route, RouteType};
+use trailfinder::{
+    Device, DeviceType, Interface, InterfaceAddress, InterfaceType, Owner, Route, RouteType,
+};
 
 fn create_test_device_with_routes(
     hostname: &str,
@@ -23,7 +25,10 @@ fn create_test_device_with_routes(
         interface_id,
         "eth0".to_string(),
         vec![],
-        vec![IpAddr::from_str("192.168.1.1").unwrap()],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.1").unwrap(),
+            24,
+        )],
         InterfaceType::Ethernet,
         None,
     ));
@@ -61,12 +66,15 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
         // Find interface addresses and build networks (simplified)
         for interface in &device_state.device.interfaces {
             for address in &interface.addresses {
-                let network_key = match address {
+                let network_key = match address.ip {
                     std::net::IpAddr::V4(ip) => {
                         let octets = ip.octets();
-                        format!("{}.{}.{}.0/{}", octets[0], octets[1], octets[2], 24)
+                        format!(
+                            "{}.{}.{}.0/{}",
+                            octets[0], octets[1], octets[2], address.prefix_length
+                        )
                     }
-                    std::net::IpAddr::V6(_) => format!("{}/{}", address, 64),
+                    std::net::IpAddr::V6(_) => format!("{}/{}", address.ip, address.prefix_length),
                 };
 
                 if !interface.vlans.is_empty() {
@@ -116,7 +124,11 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
                     }
 
                     for other_interface in &other_device.device.interfaces {
-                        if other_interface.addresses.contains(gateway_ip) {
+                        if other_interface
+                            .addresses
+                            .iter()
+                            .any(|addr| &addr.ip == gateway_ip)
+                        {
                             connections.push(NetworkConnection {
                                 from: device_state.device.hostname.clone(),
                                 to: other_device.device.hostname.clone(),
@@ -206,7 +218,10 @@ fn test_topology_with_internal_gateway() {
         uuid::Uuid::new_v4(),
         "eth1".to_string(),
         vec![],
-        vec![IpAddr::from_str("192.168.1.2").unwrap()], // Gateway IP
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.2").unwrap(),
+            24,
+        )], // Gateway IP
         InterfaceType::Ethernet,
         None,
     ));
@@ -324,7 +339,10 @@ fn test_topology_mixed_internal_external_gateways() {
         uuid::Uuid::new_v4(),
         "eth1".to_string(),
         vec![],
-        vec![IpAddr::from_str("192.168.1.2").unwrap()], // Internal gateway IP
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.2").unwrap(),
+            24,
+        )], // Internal gateway IP
         InterfaceType::Ethernet,
         None,
     ));
