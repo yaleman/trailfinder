@@ -213,12 +213,12 @@ pub async fn get_device_details(
 
     // Find the device by searching through all device states
     for device_config in &state.config.devices {
-        if let Ok(device_state) = state.config.load_device_state(&device_config.hostname) {
-            if device_state.device.device_id == device_id {
-                tracing::Span::current().record("hostname", &device_state.device.hostname);
-                debug!(hostname = %device_state.device.hostname, "Found device");
-                return Ok(Json(device_state.device));
-            }
+        if let Ok(device_state) = state.config.load_device_state(&device_config.hostname)
+            && device_state.device.device_id == device_id
+        {
+            tracing::Span::current().record("hostname", &device_state.device.hostname);
+            debug!(hostname = %device_state.device.hostname, "Found device");
+            return Ok(Json(device_state.device));
         }
     }
 
@@ -262,13 +262,9 @@ pub async fn get_network_topology(
                     std::net::IpAddr::V4(ip) => {
                         // Approximate network by zeroing last octet
                         let octets = ip.octets();
-                        format!(
-                            "{}/{}",
-                            format!("{}.{}.{}.0", octets[0], octets[1], octets[2]),
-                            24
-                        )
+                        format!("{}.{}.{}.0/{}", octets[0], octets[1], octets[2], 24)
                     }
-                    std::net::IpAddr::V6(_) => format!("{}/{}", address.to_string(), 64), // TODO: handle IPv6 properly
+                    std::net::IpAddr::V6(_) => format!("{}/{}", address, 64), // TODO: handle IPv6 properly
                 };
 
                 let segment =

@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         }
         Commands::Update { devices } => {
-            update_command(&mut app_config, config_path, devices).await?;
+            update_command(app_config, config_path, devices).await?;
         }
     }
 
@@ -315,10 +315,11 @@ async fn identify_command(
 }
 
 async fn update_command(
-    app_config: &mut AppConfig,
+    app_config: AppConfig,
     config_path: &str,
     specific_devices: Vec<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app_config = app_config;
     // Determine which devices to update
     let devices_to_update: Vec<String> = if specific_devices.is_empty() {
         // Update all devices
@@ -364,7 +365,7 @@ async fn update_command(
         info!("Updating device: {}", hostname);
 
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_and_interrogate_device(&device_config, app_config).await {
+            match identify_and_interrogate_device(&device_config, &app_config).await {
                 Ok((brand, device_type, device_state)) => {
                     info!(
                         "Updated {:?} {:?} - {} interfaces, {} routes",
