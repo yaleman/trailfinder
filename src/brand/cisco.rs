@@ -204,8 +204,7 @@ impl DeviceInterrogator for Cisco {
         ssh_client: &mut SshClient,
         device_config: &DeviceConfig,
         device_type: DeviceType,
-    ) -> impl std::future::Future<Output = Result<DeviceState, Box<dyn std::error::Error>>> + Send
-    {
+    ) -> impl std::future::Future<Output = Result<DeviceState, TrailFinderError>> + Send {
         async move {
             // Get interfaces data
             let interfaces_command = self.get_interfaces_command();

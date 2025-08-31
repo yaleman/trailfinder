@@ -9,8 +9,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::{Device, DeviceType, Owner};
+use crate::{Device, DeviceType, Owner, TrailFinderError};
 
 fn default_ssh_port() -> NonZeroU16 {
     NonZeroU16::new(22).expect("22 is a valid non-zero port number")
@@ -42,6 +43,8 @@ impl Display for DeviceBrand {
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
+    #[serde(default = "Uuid::new_v4")]
+    pub device_id: Uuid,
     pub hostname: String,
     pub ip_address: Option<IpAddr>,
     pub brand: Option<DeviceBrand>,
@@ -59,6 +62,7 @@ pub struct DeviceConfig {
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
+            device_id: Uuid::new_v4(),
             hostname: String::new(),
             ip_address: None,
             brand: None,
@@ -148,7 +152,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), TrailFinderError> {
         let content = serde_json::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
@@ -210,19 +214,33 @@ impl AppConfig {
         }
     }
 
+    pub fn use_ssh_agent(&self) -> bool {
+        self.use_ssh_agent.unwrap_or(true) // Default to true
+    }
+
+    pub fn get_hostname_by_id(&self, device_id: Uuid) -> Option<String> {
+        self.devices
+            .iter()
+            .find(|device| device.device_id == device_id)
+            .map(|device| device.hostname.clone())
+    }
+
     pub fn update_device_identification(
         &mut self,
         hostname: &str,
         brand: DeviceBrand,
         device_type: DeviceType,
-    ) -> Result<(), String> {
+    ) -> Result<(), TrailFinderError> {
         if let Some(device) = self.get_device_mut(hostname) {
             device.brand = Some(brand);
             device.device_type = Some(device_type);
             device.last_interrogated = Some(chrono::Utc::now().to_rfc3339());
             Ok(())
         } else {
-            Err(format!("Device '{}' not found in configuration", hostname))
+            Err(TrailFinderError::NotFound(format!(
+                "Device '{}' not found in configuration",
+                hostname
+            )))
         }
     }
 

@@ -4,6 +4,8 @@ use cidr::errors::NetworkParseError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::ssh::SshError;
+
 pub mod brand;
 pub mod config;
 pub mod ssh;
@@ -15,6 +17,17 @@ pub enum DeviceType {
     Switch,
     Firewall,
     AccessPoint,
+}
+
+impl std::fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceType::Router => write!(f, "Router"),
+            DeviceType::Switch => write!(f, "Switch"),
+            DeviceType::Firewall => write!(f, "Firewall"),
+            DeviceType::AccessPoint => write!(f, "Access Point"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,9 +101,33 @@ impl From<&str> for InterfaceType {
 
 #[derive(Debug)]
 pub enum TrailFinderError {
+    Ssh(SshError),
+    Generic(String),
+    Config(String),
+    NotFound(String),
     Parse(String),
     InvalidLine(String),
     Regex(regex::Error),
+    Serde(String),
+    Io(std::io::Error),
+}
+
+impl From<SshError> for TrailFinderError {
+    fn from(err: SshError) -> Self {
+        TrailFinderError::Ssh(err)
+    }
+}
+
+impl From<std::io::Error> for TrailFinderError {
+    fn from(err: std::io::Error) -> Self {
+        TrailFinderError::Io(err)
+    }
+}
+
+impl From<serde_json::Error> for TrailFinderError {
+    fn from(err: serde_json::Error) -> Self {
+        TrailFinderError::Serde(err.to_string())
+    }
 }
 
 impl From<regex::Error> for TrailFinderError {
@@ -111,6 +148,12 @@ impl std::fmt::Display for TrailFinderError {
             TrailFinderError::Parse(msg) => write!(f, "Parse error: {}", msg),
             TrailFinderError::InvalidLine(msg) => write!(f, "Invalid line: {}", msg),
             TrailFinderError::Regex(error) => write!(f, "Regex error: {}", error),
+            TrailFinderError::Serde(error) => write!(f, "Serde error: {}", error),
+            TrailFinderError::Io(error) => write!(f, "IO error: {}", error),
+            TrailFinderError::NotFound(error) => write!(f, "Not found error: {}", error),
+            TrailFinderError::Config(error) => write!(f, "Config error: {}", error),
+            TrailFinderError::Generic(error) => write!(f, "Generic error: {}", error),
+            TrailFinderError::Ssh(error) => write!(f, "SSH error: {}", error),
         }
     }
 }

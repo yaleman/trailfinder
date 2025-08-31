@@ -25,7 +25,7 @@ pub trait DeviceInterrogator {
         ssh_client: &mut SshClient,
         device_config: &DeviceConfig,
         device_type: DeviceType,
-    ) -> impl std::future::Future<Output = Result<DeviceState, Box<dyn std::error::Error>>> + Send;
+    ) -> impl std::future::Future<Output = Result<DeviceState, TrailFinderError>> + Send;
 }
 
 use crate::config::DeviceBrand;
@@ -35,7 +35,7 @@ pub async fn interrogate_device_by_brand(
     ssh_client: &mut SshClient,
     device_config: &DeviceConfig,
     device_type: DeviceType,
-) -> Result<DeviceState, Box<dyn std::error::Error>> {
+) -> Result<DeviceState, TrailFinderError> {
     match brand {
         DeviceBrand::Mikrotik => {
             let interrogator = mikrotik::Mikrotik::new(
@@ -55,6 +55,9 @@ pub async fn interrogate_device_by_brand(
                 .interrogate_device(ssh_client, device_config, device_type)
                 .await
         }
-        _ => Err(format!("Interrogation not supported for brand {:?}", brand).into()),
+        _ => Err(TrailFinderError::Generic(format!(
+            "Interrogation not supported for brand {:?}",
+            brand
+        ))),
     }
 }

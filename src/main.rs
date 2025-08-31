@@ -4,16 +4,18 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use trailfinder::{
-    DeviceType,
+    DeviceType, TrailFinderError,
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     ssh::{DeviceIdentifier, SshClient},
     web::{AppState, create_router},
 };
+use uuid::Uuid;
 
 /// Trailfinder - Network device discovery and configuration parsing tool
 #[derive(Parser)]
@@ -97,8 +99,7 @@ async fn web_server_command(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command line arguments
     let cli = Cli::parse();
 
@@ -185,7 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         }
         Commands::Update { devices } => {
-            update_command(app_config, config_path, devices).await?;
+            update_command(&mut app_config, config_path, devices).await?;
         }
     }
 
@@ -269,9 +270,11 @@ async fn identify_command(
             }
         }
 
-        match identify_and_interrogate_device(&device_config, app_config).await {
-            Ok((brand, device_type, device_state)) => {
-                info!("Identified as {:?} {:?}", brand, device_type);
+        match identify_and_interrogate_device(device_config.clone(), app_config.use_ssh_agent())
+            .await
+        {
+            Ok((device_id, brand, device_type, device_state)) => {
+                info!("{device_id} Identified as {:?} {:?}", brand, device_type);
 
                 // If this is a new device, add it to config now that identification succeeded
                 if let Some(ref new_hostname) = new_device_hostname
@@ -288,8 +291,8 @@ async fn identify_command(
 
                 // Save device state
                 match app_config.save_device_state(&hostname, &device_state) {
-                    Ok(()) => info!("Device state saved successfully"),
-                    Err(e) => warn!("Failed to save device state: {}", e),
+                    Ok(()) => info!("Device {hostname} state saved successfully"),
+                    Err(e) => warn!("Failed to save device {hostname} state: {}", e),
                 }
             }
             Err(e) => {
@@ -315,11 +318,10 @@ async fn identify_command(
 }
 
 async fn update_command(
-    app_config: AppConfig,
+    app_config: &mut AppConfig,
     config_path: &str,
     specific_devices: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut app_config = app_config;
+) -> Result<(), TrailFinderError> {
     // Determine which devices to update
     let devices_to_update: Vec<String> = if specific_devices.is_empty() {
         // Update all devices
@@ -361,33 +363,51 @@ async fn update_command(
 
     info!("Updating {} devices...", devices_to_update.len());
 
+    let mut tasks = JoinSet::new();
+
+    let use_ssh_agent = app_config.use_ssh_agent();
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
-
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            match identify_and_interrogate_device(&device_config, &app_config).await {
-                Ok((brand, device_type, device_state)) => {
-                    info!(
-                        "Updated {:?} {:?} - {} interfaces, {} routes",
-                        brand,
-                        device_type,
-                        device_state.device.interfaces.len(),
-                        device_state.device.routes.len()
-                    );
+            tasks.spawn(identify_and_interrogate_device(
+                device_config,
+                use_ssh_agent,
+            ));
+        }
+    }
 
-                    // Update device identification (in case type changed)
-                    app_config.update_device_identification(&hostname, brand, device_type)?;
-
-                    // Save updated device state
-                    match app_config.save_device_state(&hostname, &device_state) {
-                        Ok(()) => info!("Device state updated successfully"),
-                        Err(e) => warn!("Failed to save updated device state: {}", e),
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(Ok((device_id, brand, device_type, device_state))) => {
+                let hostname = match app_config.get_hostname_by_id(device_id) {
+                    Some(val) => val,
+                    None => {
+                        error!("Failed to get hostname for device ID {}", device_id);
+                        return Err(TrailFinderError::NotFound(format!(
+                            "Couldn't find device with ID {}",
+                            device_id
+                        )));
                     }
-                }
-                Err(e) => {
-                    error!("Failed to update {}: {}", hostname, e);
+                };
+                info!(
+                    "Updated {hostname} {brand} {device_type} - {} interfaces, {} routes",
+                    device_state.device.interfaces.len(),
+                    device_state.device.routes.len()
+                );
+
+                // Update device identification (in case type changed)
+                app_config.update_device_identification(&hostname, brand, device_type)?;
+
+                // Save updated device state
+                match app_config.save_device_state(&hostname, &device_state) {
+                    Ok(()) => info!("Device state updated successfully for {hostname}"),
+                    Err(e) => warn!("Failed to save updated device state for {hostname}: {e}"),
                 }
             }
+            Err(e) => {
+                error!("Failed to update {}", e);
+            }
+            Ok(Err(e)) => return Err(e),
         }
     }
 
@@ -399,9 +419,9 @@ async fn update_command(
 }
 
 async fn identify_and_interrogate_device(
-    device_config: &DeviceConfig,
-    app_config: &AppConfig,
-) -> Result<(DeviceBrand, DeviceType, DeviceState), Box<dyn std::error::Error>> {
+    device_config: DeviceConfig,
+    use_ssh_agent: bool,
+) -> Result<(Uuid, DeviceBrand, DeviceType, DeviceState), TrailFinderError> {
     // Use IP address if provided, otherwise resolve hostname
     let socket_addr = if let Some(ip) = device_config.ip_address {
         SocketAddr::new(ip, device_config.ssh_port.get())
@@ -414,16 +434,16 @@ async fn identify_and_interrogate_device(
             device_config.ssh_port.get()
         );
         let mut addrs = host_port.to_socket_addrs().map_err(|e| {
-            format!(
+            TrailFinderError::NotFound(format!(
                 "Failed to resolve hostname '{}': {}",
                 device_config.hostname, e
-            )
+            ))
         })?;
         addrs.next().ok_or_else(|| {
-            format!(
+            TrailFinderError::NotFound(format!(
                 "No IP address found for hostname '{}'",
                 device_config.hostname
-            )
+            ))
         })?
     };
     let timeout = Duration::from_secs(30);
@@ -442,10 +462,13 @@ async fn identify_and_interrogate_device(
             Err(e) => {
                 debug!("SSH config failed ({}), trying manual config...", e);
 
-                let username = device_config
-                    .ssh_username
-                    .as_deref()
-                    .ok_or("No SSH username configured")?;
+                let username =
+                    device_config
+                        .ssh_username
+                        .as_deref()
+                        .ok_or(TrailFinderError::Config(
+                            "No SSH username configured".to_string(),
+                        ))?;
 
                 let password = std::env::var("SSH_PASSWORD").ok();
                 let key_path = device_config
@@ -466,21 +489,41 @@ async fn identify_and_interrogate_device(
                     password.as_deref(),
                     key_path.as_deref(),
                     key_passphrase,
-                    app_config.use_ssh_agent.unwrap_or(true), // Default to true
+                    use_ssh_agent, // Default to true
                     timeout,
                 )
-                .await?
+                .await
+                .map_err(|err| TrailFinderError::Generic(err.to_string()))?
             }
         };
 
     let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client).await?;
 
-    info!("Interrogating device configuration... for brand {brand}");
+    info!(
+        "Interrogating device {} configuration... for brand {brand}",
+        device_config.hostname
+    );
 
     // Interrogate device using trait-based approach
     let device_state =
-        interrogate_device_by_brand(brand.clone(), &mut ssh_client, device_config, device_type)
+        interrogate_device_by_brand(brand.clone(), &mut ssh_client, &device_config, device_type)
             .await?;
 
-    Ok((brand, device_type, device_state))
+    Ok((device_config.device_id, brand, device_type, device_state))
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(
+            std::thread::available_parallelism()
+                .map(|t| t.get())
+                .unwrap_or_else(|_e| {
+                    eprintln!("WARNING: Unable to read number of available CPUs, defaulting to 4");
+                    4
+                }),
+        )
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async { main_func().await })
 }
