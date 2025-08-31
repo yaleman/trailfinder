@@ -209,34 +209,10 @@ async function showDeviceDetails(deviceId) {
 
 function renderDeviceDetails(device) {
     const content = document.getElementById('device-detail-content');
-
-    const interfacesTable = device.interfaces.map(iface => {
-        const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
-        const interfaceClass = getInterfaceTypeClass(iface.interface_type);
-        return `
-            <tr>
-                <td>${iface.name}</td>
-                <td><span class="interface-type ${interfaceClass}">${interfaceType}</span></td>
-                <td>${iface.vlan || 'N/A'}</td>
-                <td>${iface.addresses.join(', ') || 'None'}</td>
-                <td>${iface.comment || ''}</td>
-            </tr>
-        `;
-    }).join('');
-
-    const routesTable = device.routes.map(route => `
-        <tr>
-            <td>${route.target}</td>
-            <td><span class="route-type ${getRouteTypeClass(route.route_type)}\">${getRouteTypeDisplay(route.route_type)}</span></td>
-            <td>${route.gateway || 'N/A'}</td>
-            <td>${route.distance || 'N/A'}</td>
-        </tr>
-    `).join('');
-
-    creeateDeviceDetailDiv(content, device, interfacesTable, routesTable);
+    createDeviceDetailDiv(content, device);
 }
 
-function creeateDeviceDetailDiv(content, device, interfacesTable, routesTable) {
+function createDeviceDetailDiv(content, device) {
     // Clear existing content
     content.textContent = '';
 

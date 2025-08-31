@@ -1,9 +1,10 @@
 use cidr::IpCidr;
+use regex::Regex;
 use tracing::debug;
+use tracing::error;
 use tracing::info;
 use uuid::Uuid;
 
-use super::DeviceInterrogator;
 use super::prelude::*;
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
@@ -32,7 +33,7 @@ pub(crate) fn find_kv(parts: &Vec<&str>, key: &str) -> Option<String> {
         })
 }
 
-impl ConfParser for Mikrotik {
+impl DeviceHandler for Mikrotik {
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
             hostname,
@@ -121,6 +122,8 @@ impl ConfParser for Mikrotik {
                 addresses: Vec::new(),
                 interface_type,
                 comment,
+                neighbour_string_data: None,
+                peer: None,
             };
             debug!("Adding interface: {interface:?}");
             self.interfaces.push(interface);
@@ -248,14 +251,68 @@ impl ConfParser for Mikrotik {
         Ok(())
     }
 
+    fn parse_neighbours(
+        &mut self,
+        input_data: &str,
+        devices: Vec<Device>,
+    ) -> Result<usize, TrailFinderError> {
+        let mut mods_made = 0;
+        let line_parser = Regex::new(
+            r#"(?P<interface_id>\d+)\s+(?P<interface_name>\S+)\s+(?P<peer_address>\S+)\s+(?P<peer_mac>\S+)\s+(?P<peer_identity>\S+)"#,
+        )?;
+
+        for line in input_data.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("Columns:") {
+                continue;
+            }
+            debug!("Parsing CDP line: {line}");
+            if let Some(caps) = line_parser.captures(line) {
+                let interface_name = caps
+                    .name("interface_name")
+                    .map(|m| m.as_str())
+                    .unwrap_or("");
+                // let peer_address = caps.name("peer_address").map(|m| m.as_str()).unwrap_or("");
+                // let peer_mac = caps.name("peer_mac").map(|m| m.as_str()).unwrap_or("");
+                let peer_identity = caps.name("peer_identity").map(|m| m.as_str()).unwrap_or("");
+
+                // Do something with the extracted values
+
+                // find if we have this interface
+                if let Some(existing_interface) = self
+                    .interfaces
+                    .iter_mut()
+                    .find(|iface| iface.name == interface_name)
+                {
+                    // Interface exists, do something with it
+                    existing_interface.neighbour_string_data = Some(line.to_string());
+                    mods_made += 1;
+
+                    // try and find the peer identity in the devices list
+                    if let Some(peer) = devices.iter().find(|p| p.hostname == peer_identity) {
+                        existing_interface.peer = Some(peer.device_id);
+                        mods_made += 1;
+                    }
+                } else {
+                    error!("Don't have interface {interface_name} found in CDP data?");
+                    continue;
+                }
+            }
+        }
+
+        Ok(mods_made)
+    }
+
     fn build(self) -> Device {
         Device::new(self.hostname, self.name, self.owner, self.device_type)
             .with_routes(self.routes)
             .with_interfaces(self.interfaces)
     }
-}
 
-impl DeviceInterrogator for Mikrotik {
+    fn get_cdp_command(&self) -> String {
+        "/ip neighbor/print".to_string()
+    }
+
     fn get_interfaces_command(&self) -> String {
         "/interface print without-paging detail".to_string()
     }
@@ -505,4 +562,25 @@ fn test_mikrotik_route_types() {
         "✅ Found {} default routes and {} specific routes",
         default_count, specific_count
     );
+}
+
+#[test]
+fn test_mikrotik_cdp() {
+    use crate::brand::cisco::Cisco;
+
+    let test_data = r#"Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY
+#  INTERFACE     ADDRESS    MAC-ADDRESS        IDENTITY
+0  sfp-sfpplus1  10.0.99.2  A0:23:9F:FF:FF:33  test-cisco.example.com
+   bridge"#;
+
+    let mut device = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    let test_cisco = Cisco::test_device().build().into();
+    let result = device.parse_neighbours(test_data, vec![test_cisco]);
+    assert!(result.is_ok(), "CDP parsing should succeed");
 }

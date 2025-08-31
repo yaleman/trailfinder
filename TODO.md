@@ -3,6 +3,7 @@
 ## Upcoming Features
 
 - [ ] implement proper ssh config parsing because currently it misses some things
+- [ ] implement cdp parsing/discovery
 
 ### UI changes
 
@@ -25,7 +26,6 @@
 
 - [ ] Add usage examples to README
 - [ ] Add troubleshooting guide for common issues
-
 
 ### SSH Agent Support
 

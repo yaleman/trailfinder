@@ -1,8 +1,8 @@
 use cidr::IpCidr;
 use regex::Regex;
+use tracing::{debug, error, trace};
 use uuid::Uuid;
 
-use super::DeviceInterrogator;
 use super::prelude::*;
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
@@ -16,7 +16,21 @@ pub struct Cisco {
     interfaces: Vec<Interface>,
 }
 
-impl ConfParser for Cisco {
+impl Cisco {
+    #[cfg(test)]
+    pub fn test_device() -> Self {
+        Self {
+            hostname: "test-cisco.example.com".to_string(),
+            name: Some("Test Cisco Device".to_string()),
+            owner: Owner::Unknown,
+            device_type: DeviceType::Switch,
+            routes: Vec::new(),
+            interfaces: Vec::new(),
+        }
+    }
+}
+
+impl DeviceHandler for Cisco {
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
             hostname,
@@ -88,6 +102,8 @@ impl ConfParser for Cisco {
                     addresses: Vec::new(), // IP addresses would need separate parsing
                     interface_type,
                     comment: None,
+                    neighbour_string_data: None,
+                    peer: None,
                 };
 
                 self.interfaces.push(interface);
@@ -180,6 +196,69 @@ impl ConfParser for Cisco {
         Ok(())
     }
 
+    fn parse_neighbours(
+        &mut self,
+        input_data: &str,
+        _devices: Vec<Device>,
+    ) -> Result<usize, TrailFinderError> {
+        let mut mods_made = 0;
+        let interface_parser = Regex::new(r#"Interface: (?<interface>\S+)"#)?;
+
+        let mut current_data = String::new();
+
+        let lines = input_data.lines().collect::<Vec<&str>>();
+        let num_lines = lines.len();
+        for (line_no, line) in lines.iter().enumerate() {
+            debug!("Handling line #{line_no}: {line}");
+
+            if line_no == num_lines - 1 || line.starts_with("---") {
+                if current_data.is_empty() {
+                    continue;
+                }
+                debug!("Found a full line");
+            } else {
+                current_data.push_str(&format!("{}\n", line));
+                continue;
+            }
+
+            debug!("Full block: {current_data}");
+
+            let interface = interface_parser
+                .captures(&current_data)
+                .map(|caps| {
+                    let interface_name = caps
+                        .name("interface")
+                        .map(|m| m.as_str().trim_end_matches(',').to_string());
+                    debug!("Parsed interface: {interface_name:?}");
+                    interface_name
+                })
+                .flatten();
+
+            // find if have this interface already, and print a success/fail message
+            if let Some(interface_name) = interface {
+                if let Some(interface) = self
+                    .interfaces
+                    .iter_mut()
+                    .find(|interface| interface.name == interface_name)
+                {
+                    debug!("Successfully found peer interface: {}", interface.name);
+                    interface.neighbour_string_data = Some(current_data.clone());
+                    mods_made += 1;
+                } else {
+                    error!("Can't find interface: {interface_name}");
+                    // debug!("Known interfaces: {:?}", self.interfaces)
+                }
+            }
+
+            if line.starts_with("---") {
+                trace!("Starting a new device on next line...");
+                current_data.clear();
+            }
+        }
+
+        Ok(mods_made)
+    }
+
     fn build(self) -> Device {
         let mut device = Device::new(self.hostname, self.name, self.owner, self.device_type);
         device.routes = self.routes;
@@ -187,9 +266,11 @@ impl ConfParser for Cisco {
 
         device
     }
-}
 
-impl DeviceInterrogator for Cisco {
+    fn get_cdp_command(&self) -> String {
+        "show cdp neighbors".to_string()
+    }
+
     fn get_interfaces_command(&self) -> String {
         "show interfaces".to_string()
     }
@@ -240,6 +321,8 @@ impl DeviceInterrogator for Cisco {
 
 #[cfg(test)]
 mod tests {
+    use crate::setup_test_logging;
+
     use super::*;
 
     #[test]
@@ -346,5 +429,137 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
             device.interfaces.len(),
             device.routes.len()
         );
+    }
+
+    #[test]
+    fn test_parse_cdp() {
+        setup_test_logging();
+
+        let input_data = r#"-------------------------
+Device ID: Housenet
+Entry address(es):
+  IP address: 10.0.40.1
+Platform: MikroTik,  Capabilities: Router
+Interface: TenGigabitEthernet1/1/3,  Port ID (outgoing port): vlan40
+Holdtime : 93 sec
+
+Version :
+7.16.1 (stable) 2024-10-10 14:03:32
+
+advertisement version: 1
+
+-------------------------
+Device ID: Housenet
+Entry address(es):
+  IP address: 10.0.5.1
+Platform: MikroTik,  Capabilities: Router
+Interface: TenGigabitEthernet1/1/3,  Port ID (outgoing port): vlan20
+Holdtime : 93 sec
+
+Version :
+7.16.1 (stable) 2024-10-10 14:03:32
+
+advertisement version: 1
+
+-------------------------
+Device ID: Housenet
+Entry address(es):
+  IP address: 10.0.0.1
+Platform: MikroTik,  Capabilities: Router
+Interface: TenGigabitEthernet1/1/3,  Port ID (outgoing port): vlan10
+Holdtime : 93 sec
+
+Version :
+7.16.1 (stable) 2024-10-10 14:03:32
+
+advertisement version: 1
+
+-------------------------
+Device ID: Housenet
+Entry address(es):
+  IP address: 192.168.88.1
+Platform: MikroTik,  Capabilities: Router
+Interface: TenGigabitEthernet1/1/3,  Port ID (outgoing port): bridge/sfp-sfpplus1
+Holdtime : 93 sec
+
+Version :
+7.16.1 (stable) 2024-10-10 14:03:32
+
+advertisement version: 1
+
+
+Total cdp entries displayed : 4"#;
+
+        let test_interface_data = r#"Vlan1 is administratively down, line protocol is down , Autostate Enabled
+GigabitEthernet0/0 is up, line protocol is up
+GigabitEthernet1/0/1 is up, line protocol is up (connected)
+GigabitEthernet1/0/2 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/3 is up, line protocol is up (connected)
+GigabitEthernet1/0/4 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/5 is up, line protocol is up (connected)
+GigabitEthernet1/0/6 is up, line protocol is up (connected)
+GigabitEthernet1/0/7 is up, line protocol is up (connected)
+GigabitEthernet1/0/8 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/9 is up, line protocol is up (connected)
+GigabitEthernet1/0/10 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/11 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/12 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/13 is up, line protocol is up (connected)
+GigabitEthernet1/0/14 is up, line protocol is up (connected)
+GigabitEthernet1/0/15 is up, line protocol is up (connected)
+GigabitEthernet1/0/16 is up, line protocol is up (connected)
+GigabitEthernet1/0/17 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/18 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/19 is up, line protocol is up (connected)
+GigabitEthernet1/0/20 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/21 is up, line protocol is up (connected)
+GigabitEthernet1/0/22 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/23 is up, line protocol is up (connected)
+GigabitEthernet1/0/24 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/25 is up, line protocol is up (connected)
+GigabitEthernet1/0/26 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/27 is up, line protocol is up (connected)
+GigabitEthernet1/0/28 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/29 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/30 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/31 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/32 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/33 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/34 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/35 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/36 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/37 is up, line protocol is up (connected)
+GigabitEthernet1/0/38 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/39 is up, line protocol is up (connected)
+GigabitEthernet1/0/40 is down, line protocol is down (notconnect)
+GigabitEthernet1/0/41 is up, line protocol is up (connected)
+GigabitEthernet1/0/42 is up, line protocol is up (connected)
+GigabitEthernet1/0/43 is up, line protocol is up (connected)
+GigabitEthernet1/0/44 is up, line protocol is up (connected)
+GigabitEthernet1/0/45 is up, line protocol is up (connected)
+GigabitEthernet1/0/46 is up, line protocol is up (connected)
+GigabitEthernet1/0/47 is up, line protocol is up (connected)
+GigabitEthernet1/0/48 is up, line protocol is up (connected)
+GigabitEthernet1/1/1 is down, line protocol is down (notconnect)
+GigabitEthernet1/1/2 is down, line protocol is down (notconnect)
+TenGigabitEthernet1/1/3 is up, line protocol is up (connected)
+TenGigabitEthernet1/1/4 is down, line protocol is down (notconnect)
+Port-channel2 is up, line protocol is up (connected)
+Connection to c3650.housenet.yaleman.org closed by remote host."#;
+
+        let mut device = Cisco::new(
+            "test.example.com".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Switch,
+        );
+        device
+            .parse_interfaces(test_interface_data)
+            .expect("Failed to parse interfaces");
+
+        device.parse_routes("").expect("Failed to parse routes");
+        device
+            .parse_neighbours(input_data, vec![])
+            .expect("Failed to parse neigbours");
     }
 }

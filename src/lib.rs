@@ -168,6 +168,9 @@ pub struct Interface {
     pub addresses: Vec<IpAddr>, // TODO: these should be CIDR's because addresses have subnet masks
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
+
+    neighbour_string_data: Option<String>,
+    peer: Option<Uuid>,
 }
 
 impl Interface {
@@ -256,9 +259,10 @@ pub(crate) fn setup_test_logging() {
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_target(false)
+                .with_target(true)
                 .with_thread_ids(false)
-                .with_level(true),
+                .with_level(true)
+                .with_writer(std::io::stdout),
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();
