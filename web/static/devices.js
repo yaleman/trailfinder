@@ -2,7 +2,7 @@
 let devicesData = [];
 
 // Initialize the application
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     initializeEventListeners();
     loadDevices();
 });
@@ -11,10 +11,10 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeEventListeners() {
     // Refresh button
     document.getElementById('refresh-devices').addEventListener('click', loadDevices);
-    
+
     // Device filter
     document.getElementById('device-filter').addEventListener('input', filterDevices);
-    
+
     // Modal close
     document.querySelector('.close').addEventListener('click', closeModal);
     window.addEventListener('click', (event) => {
@@ -34,14 +34,14 @@ async function apiCall(endpoint, options = {}) {
             },
             ...options
         });
-        
+
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         return await response.json();
     } catch (error) {
-        console.error(`API call failed for ${endpoint}:`, error);
+        console.error("API call failed", endpoint, error);
         showError(`Failed to load data from ${endpoint}`);
         return null;
     }
@@ -51,7 +51,7 @@ async function apiCall(endpoint, options = {}) {
 async function loadDevices() {
     const devicesList = document.getElementById('devices-list');
     devicesList.innerHTML = '<div class="loading">Loading devices...</div>';
-    
+
     devicesData = await apiCall('/devices');
     if (devicesData) {
         renderDevices(devicesData);
@@ -60,12 +60,12 @@ async function loadDevices() {
 
 function renderDevices(devices) {
     const devicesList = document.getElementById('devices-list');
-    
+
     if (!devices || devices.length === 0) {
         devicesList.innerHTML = '<div class="no-data">No devices found</div>';
         return;
     }
-    
+
     const devicesHTML = devices.map(device => `
         <div class="device-card" onclick="showDeviceDetails('${device.device_id}')">
             <h3>${device.hostname}</h3>
@@ -79,18 +79,18 @@ function renderDevices(devices) {
             ${device.last_seen ? `<div class="device-last-seen">Last seen: ${formatDate(device.last_seen)}</div>` : ''}
         </div>
     `).join('');
-    
+
     devicesList.innerHTML = devicesHTML;
 }
 
 function filterDevices() {
     const filterValue = document.getElementById('device-filter').value.toLowerCase();
-    const filteredDevices = devicesData.filter(device => 
+    const filteredDevices = devicesData.filter(device =>
         device.hostname.toLowerCase().includes(filterValue) ||
         (device.name && device.name.toLowerCase().includes(filterValue)) ||
         (device.brand && device.brand.toLowerCase().includes(filterValue))
     );
-    
+
     renderDevices(filteredDevices);
 }
 
@@ -98,10 +98,10 @@ function filterDevices() {
 async function showDeviceDetails(deviceId) {
     const modal = document.getElementById('device-modal');
     const content = document.getElementById('device-detail-content');
-    
+
     content.innerHTML = '<div class="loading">Loading device details...</div>';
     modal.style.display = 'block';
-    
+
     const deviceDetail = await apiCall(`/devices/${deviceId}`);
     if (deviceDetail) {
         renderDeviceDetails(deviceDetail);
@@ -110,7 +110,7 @@ async function showDeviceDetails(deviceId) {
 
 function renderDeviceDetails(device) {
     const content = document.getElementById('device-detail-content');
-    
+
     const interfacesTable = device.interfaces.map(iface => {
         const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
         const interfaceClass = getInterfaceTypeClass(iface.interface_type);
@@ -124,7 +124,7 @@ function renderDeviceDetails(device) {
             </tr>
         `;
     }).join('');
-    
+
     const routesTable = device.routes.map(route => `
         <tr>
             <td>${route.target}</td>
@@ -133,7 +133,7 @@ function renderDeviceDetails(device) {
             <td>${route.distance || 'N/A'}</td>
         </tr>
     `).join('');
-    
+
     content.innerHTML = `
         <div class="device-detail">
             <h2>${device.hostname}</h2>
@@ -236,9 +236,9 @@ function showError(message) {
     error.style.borderRadius = '8px';
     error.style.zIndex = '9999';
     error.textContent = message;
-    
+
     document.body.appendChild(error);
-    
+
     setTimeout(() => {
         document.body.removeChild(error);
     }, 5000);

@@ -2,7 +2,7 @@
 let devicesData = [];
 
 // Initialize the application
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     initializeEventListeners();
     loadPathfinderDevices();
 });
@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeEventListeners() {
     // Find path button
     document.getElementById('find-path').addEventListener('click', findPath);
-    
+
     // Source device change
     document.getElementById('source-device').addEventListener('change', updateSourceInterfaces);
 }
@@ -25,14 +25,14 @@ async function apiCall(endpoint, options = {}) {
             },
             ...options
         });
-        
+
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
-        
+
         return await response.json();
     } catch (error) {
-        console.error(`API call failed for ${endpoint}:`, error);
+        console.error("API call failed", endpoint, error);
         showError(`Failed to load data from ${endpoint}`);
         return null;
     }
@@ -44,7 +44,7 @@ async function loadPathfinderDevices() {
     if (devicesData) {
         const sourceSelect = document.getElementById('source-device');
         sourceSelect.innerHTML = '<option value="">Select device...</option>' +
-            devicesData.map(device => 
+            devicesData.map(device =>
                 `<option value="${device.device_id}">${device.hostname}</option>`
             ).join('');
     }
@@ -53,16 +53,16 @@ async function loadPathfinderDevices() {
 async function updateSourceInterfaces() {
     const deviceId = document.getElementById('source-device').value;
     const interfaceSelect = document.getElementById('source-interface');
-    
+
     if (!deviceId) {
         interfaceSelect.innerHTML = '<option value="">Select interface...</option>';
         return;
     }
-    
+
     const deviceDetail = await apiCall(`/devices/${deviceId}`);
     if (deviceDetail) {
         interfaceSelect.innerHTML = '<option value="">Select interface...</option>' +
-            deviceDetail.interfaces.map(iface => 
+            deviceDetail.interfaces.map(iface =>
                 `<option value="${iface.name}">${iface.name} (${getInterfaceTypeDisplay(iface.interface_type)})</option>`
             ).join('');
     }
@@ -73,12 +73,12 @@ async function findPath() {
     const sourceInterface = document.getElementById('source-interface').value;
     const sourceIp = document.getElementById('source-ip').value;
     const destinationIp = document.getElementById('destination-ip').value;
-    
+
     if (!destinationIp) {
         showError('Please specify a destination IP or network');
         return;
     }
-    
+
     const request = {
         source: {
             device_id: sourceDeviceId || null,
@@ -89,15 +89,15 @@ async function findPath() {
             ip: destinationIp
         }
     };
-    
+
     const results = document.getElementById('path-results');
     results.innerHTML = '<div class="loading">Finding path...</div>';
-    
+
     const pathResult = await apiCall('/pathfind', {
         method: 'POST',
         body: JSON.stringify(request)
     });
-    
+
     if (pathResult) {
         renderPathResult(pathResult);
     }
@@ -105,7 +105,7 @@ async function findPath() {
 
 function renderPathResult(result) {
     const container = document.getElementById('path-results');
-    
+
     if (!result.success) {
         container.innerHTML = `
             <div class="error">
@@ -115,7 +115,7 @@ function renderPathResult(result) {
         `;
         return;
     }
-    
+
     const pathHTML = result.path.map((hop, index) => `
         <div class="path-hop">
             <div class="hop-number">${index + 1}</div>
@@ -126,7 +126,7 @@ function renderPathResult(result) {
             </div>
         </div>
     `).join('');
-    
+
     container.innerHTML = `
         <h3>Path Found (${result.total_hops} hops)</h3>
         <div class="path-visualization">
@@ -158,9 +158,9 @@ function showError(message) {
     error.style.borderRadius = '8px';
     error.style.zIndex = '9999';
     error.textContent = message;
-    
+
     document.body.appendChild(error);
-    
+
     setTimeout(() => {
         document.body.removeChild(error);
     }, 5000);
