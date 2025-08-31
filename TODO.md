@@ -7,7 +7,7 @@
 
 ### UI changes
 
-- [ ] When the route finds an edge that leads to a default gateway that's not linked to another device, it should link to an "internet" node.
+- [x] When the route finds an edge that leads to a default gateway that's not linked to another device, it should link to an "internet" node.
 
 ### Additional Device Brands
 

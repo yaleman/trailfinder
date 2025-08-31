@@ -86,6 +86,7 @@ pub enum ConnectionType {
     DirectLink,
     Gateway,
     SameNetwork,
+    Internet,
 }
 
 #[derive(Serialize)]
@@ -285,6 +286,8 @@ pub async fn get_network_topology(
         // Find gateway connections through routes
         for route in &device_state.device.routes {
             if let Some(gateway_ip) = &route.gateway {
+                let mut gateway_found = false;
+                
                 // Look for devices that have this gateway IP as an interface
                 for other_device in &device_states {
                     if other_device.device.hostname == device_state.device.hostname {
@@ -300,11 +303,38 @@ pub async fn get_network_topology(
                                 interface_to: Some(other_interface.name.clone()),
                                 connection_type: ConnectionType::Gateway,
                             });
+                            gateway_found = true;
+                            break;
                         }
                     }
+                    if gateway_found {
+                        break;
+                    }
+                }
+                
+                // If gateway not found in our devices, it's an external gateway
+                if !gateway_found {
+                    connections.push(NetworkConnection {
+                        from: device_state.device.hostname.clone(),
+                        to: "internet".to_string(),
+                        interface_from: format!("route-{}", route.target),
+                        interface_to: Some(gateway_ip.to_string()),
+                        connection_type: ConnectionType::Internet,
+                    });
                 }
             }
         }
+    }
+
+    // Add internet node if there are any internet connections
+    let has_internet_connections = connections.iter().any(|conn| matches!(conn.connection_type, ConnectionType::Internet));
+    if has_internet_connections {
+        devices.push(NetworkDevice {
+            device_id: "internet".to_string(),
+            hostname: "🌐 Internet".to_string(),
+            device_type: None,
+            position: None,
+        });
     }
 
     let topology = NetworkTopology {
@@ -535,3 +565,4 @@ async fn perform_pathfind(
         Ok(path)
     }
 }
+

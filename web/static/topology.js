@@ -113,15 +113,19 @@ function renderTopology(topology) {
         .data(topology.devices)
         .enter().append('circle')
         .attr('class', 'node')
-        .attr('r', 20)
-        .style('fill', d => getDeviceColor(d.device_type))
+        .attr('r', d => d.device_id === 'internet' ? 30 : 20)
+        .style('fill', d => d.device_id === 'internet' ? '#3498db' : getDeviceColor(d.device_type))
         .style('stroke', '#fff')
         .style('stroke-width', 2)
         .call(d3.drag()
             .on('start', dragstarted)
             .on('drag', dragged)
             .on('end', dragended))
-        .on('click', (_event, d) => showDeviceDetails(d.device_id))
+        .on('click', (_event, d) => {
+            if (d.device_id !== 'internet') {
+                showDeviceDetails(d.device_id);
+            }
+        })
         .on('mouseover', (_event, d) => {
             // Add tooltip
             d3.select('body').append('div')
@@ -380,7 +384,8 @@ function getConnectionColor(connectionType) {
     const colors = {
         'DirectLink': '#2ecc71',
         'Gateway': '#e74c3c',
-        'SameNetwork': '#f39c12'
+        'SameNetwork': '#f39c12',
+        'Internet': '#9b59b6'
     };
     return colors[connectionType] || '#999';
 }

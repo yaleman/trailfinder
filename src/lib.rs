@@ -174,6 +174,26 @@ pub struct Interface {
 }
 
 impl Interface {
+    pub fn new(
+        interface_id: Uuid,
+        name: String,
+        vlan: Option<u16>,
+        addresses: Vec<IpAddr>,
+        interface_type: InterfaceType,
+        comment: Option<String>,
+    ) -> Self {
+        Self {
+            interface_id,
+            name,
+            vlan,
+            addresses,
+            interface_type,
+            comment,
+            neighbour_string_data: None,
+            peer: None,
+        }
+    }
+
     pub fn interface_id(&self, device_id: &uuid::Uuid) -> String {
         format!("{}:{}:{}", device_id, self.name, self.interface_type)
     }
