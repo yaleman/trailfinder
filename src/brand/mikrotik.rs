@@ -118,11 +118,11 @@ impl DeviceHandler for Mikrotik {
             let interface = Interface {
                 interface_id: Uuid::new_v4(),
                 name,
-                vlan,
+                vlans: vlan.map(|v| vec![v]).unwrap_or_default(),
                 addresses: Vec::new(),
                 interface_type,
                 comment,
-                neighbour_string_data: None,
+                neighbour_string_data: Default::default(),
                 peer: None,
             };
             debug!("Adding interface: {interface:?}");
@@ -307,8 +307,14 @@ impl DeviceHandler for Mikrotik {
                     .find(|iface| iface.name == interface_name)
                 {
                     // Interface exists, do something with it
-                    existing_interface.neighbour_string_data = Some(line.to_string());
-                    mods_made += 1;
+                    if existing_interface.neighbour_string_data.get(peer_identity)
+                        != Some(&line.to_string())
+                    {
+                        existing_interface
+                            .neighbour_string_data
+                            .insert(peer_identity.to_string(), line.to_string());
+                        mods_made += 1;
+                    }
 
                     // try and find the peer identity in the devices list
                     if let Some(peer) = devices.iter().find(|p| p.hostname == peer_identity) {

@@ -285,17 +285,37 @@ pub async fn get_network_topology(
                     std::net::IpAddr::V6(_) => format!("{}/{}", address, 64), // TODO: handle IPv6 properly
                 };
 
-                let segment =
-                    networks
-                        .entry(network_key.clone())
-                        .or_insert_with(|| NetworkSegment {
-                            network: network_key,
-                            vlan_id: interface.vlan,
-                            devices: Vec::new(),
-                        });
+                if !interface.vlans.is_empty() {
+                    // If the interface has VLANs, treat each VLAN as a separate segment
+                    for vlan_id in &interface.vlans {
+                        let vlan_network_key = format!("{}-vlan{}", network_key, vlan_id);
+                        let segment =
+                            networks.entry(vlan_network_key.clone()).or_insert_with(|| {
+                                NetworkSegment {
+                                    network: vlan_network_key,
+                                    vlan_id: Some(*vlan_id),
+                                    devices: Vec::new(),
+                                }
+                            });
 
-                if !segment.devices.contains(&device_state.device.hostname) {
-                    segment.devices.push(device_state.device.hostname.clone());
+                        if !segment.devices.contains(&device_state.device.hostname) {
+                            segment.devices.push(device_state.device.hostname.clone());
+                        }
+                    }
+                } else {
+                    // If the interface is bare, treat it as a single segment
+                    let segment =
+                        networks
+                            .entry(network_key.clone())
+                            .or_insert_with(|| NetworkSegment {
+                                network: network_key.clone(),
+                                vlan_id: None,
+                                devices: Vec::new(),
+                            });
+
+                    if !segment.devices.contains(&device_state.device.hostname) {
+                        segment.devices.push(device_state.device.hostname.clone());
+                    }
                 }
             }
         }

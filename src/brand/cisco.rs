@@ -98,11 +98,11 @@ impl DeviceHandler for Cisco {
                 let interface = Interface {
                     interface_id: Uuid::new_v4(),
                     name: interface_name,
-                    vlan,
+                    vlans: vlan.map(|v| vec![v]).unwrap_or_default(),
                     addresses: Vec::new(), // IP addresses would need separate parsing
                     interface_type,
                     comment: None,
-                    neighbour_string_data: None,
+                    neighbour_string_data: Default::default(),
                     peer: None,
                 };
 
@@ -202,14 +202,16 @@ impl DeviceHandler for Cisco {
         _devices: Vec<Device>,
     ) -> Result<usize, TrailFinderError> {
         let mut mods_made = 0;
-        let interface_parser = Regex::new(r#"Interface: (?<interface>\S+)"#)?;
+        let interface_parser = Regex::new(
+            r#"Interface: (?<interface>\S+),\s+Port ID \(outgoing port\):\s*(?P<outgoing_port_id>\S+)"#,
+        )?;
 
         let mut current_data = String::new();
 
         let lines = input_data.lines().collect::<Vec<&str>>();
         let num_lines = lines.len();
         for (line_no, line) in lines.iter().enumerate() {
-            debug!("Handling line #{line_no}: {line}");
+            // debug!("Handling line #{line_no}: {line}");
 
             if line_no == num_lines - 1 || line.starts_with("---") {
                 if current_data.is_empty() {
@@ -223,27 +225,37 @@ impl DeviceHandler for Cisco {
 
             debug!("Full block: {current_data}");
 
-            let interface = interface_parser.captures(&current_data).and_then(|caps| {
-                let interface_name = caps
-                    .name("interface")
-                    .map(|m| m.as_str().trim_end_matches(',').to_string());
-                debug!("Parsed interface: {interface_name:?}");
-                interface_name
+            let interface_name = interface_parser.captures(&current_data).map(|caps| {
+                let interface_name = caps.name("interface").map(|m| m.as_str().to_string());
+                let port_id = caps
+                    .name("outgoing_port_id")
+                    .map(|m| m.as_str().to_string());
+
+                (interface_name, port_id)
             });
 
             // find if have this interface already, and print a success/fail message
-            if let Some(interface_name) = interface {
+            if let Some((Some(interface_name), Some(port_id))) = interface_name {
                 if let Some(interface) = self
                     .interfaces
                     .iter_mut()
                     .find(|interface| interface.name == interface_name)
                 {
                     debug!("Successfully found peer interface: {}", interface.name);
-                    interface.neighbour_string_data = Some(current_data.clone());
-                    mods_made += 1;
+                    if interface.neighbour_string_data.get(&port_id) != Some(&current_data) {
+                        debug!(
+                            "Updating neighbour data for interface from: \n{:?}\nto\n{:?}",
+                            interface.neighbour_string_data,
+                            Some(current_data.clone())
+                        );
+                        interface
+                            .neighbour_string_data
+                            .insert(port_id, current_data.clone());
+                        mods_made += 1;
+                        current_data.clear()
+                    }
                 } else {
-                    error!("Can't find interface: {interface_name}");
-                    // debug!("Known interfaces: {:?}", self.interfaces)
+                    error!("Can't find interface: {interface_name:?}");
                 }
             }
 
@@ -374,7 +386,7 @@ Loopback0 is up, line protocol is up
         // Check VLAN number extraction
         let vlan1 = device.interfaces.iter().find(|iface| iface.name == "Vlan1");
         assert!(vlan1.is_some(), "Should find Vlan1 interface");
-        assert_eq!(vlan1.unwrap().vlan, Some(1), "VLAN number should be 1");
+        assert_eq!(vlan1.unwrap().vlans, vec![1], "VLAN number should be 1");
     }
 
     #[test]
@@ -429,7 +441,7 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
     }
 
     #[test]
-    fn test_parse_cdp() {
+    fn test_parse_cisco_cdp() {
         setup_test_logging();
 
         let input_data = r#"-------------------------
@@ -555,8 +567,16 @@ Connection to c3650.housenet.yaleman.org closed by remote host."#;
             .expect("Failed to parse interfaces");
 
         device.parse_routes("").expect("Failed to parse routes");
-        device
-            .parse_neighbours(input_data, vec![])
-            .expect("Failed to parse neigbours");
+        let mut attempts = 0;
+        while let Ok(changes) = device.parse_neighbours(input_data, vec![]) {
+            if changes == 0 {
+                println!("Finished parsing neighbours after {attempts} attempts");
+                break;
+            }
+            attempts += 1;
+            if attempts > 100 {
+                panic!("Too many attempts to parse neighbours");
+            }
+        }
     }
 }

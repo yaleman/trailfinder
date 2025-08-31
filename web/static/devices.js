@@ -111,77 +111,193 @@ async function showDeviceDetails(deviceId) {
 function renderDeviceDetails(device) {
     const content = document.getElementById('device-detail-content');
 
-    const interfacesTable = device.interfaces.map(iface => {
-        const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
-        const interfaceClass = getInterfaceTypeClass(iface.interface_type);
-        return `
-            <tr>
-                <td>${iface.name}</td>
-                <td><span class="interface-type ${interfaceClass}">${interfaceType}</span></td>
-                <td>${iface.vlan || 'N/A'}</td>
-                <td>${iface.addresses.join(', ') || 'None'}</td>
-                <td>${iface.comment || ''}</td>
-            </tr>
-        `;
-    }).join('');
+    // Clear existing content
+    content.textContent = '';
 
-    const routesTable = device.routes.map(route => `
-        <tr>
-            <td>${route.target}</td>
-            <td><span class="route-type ${getRouteTypeClass(route.route_type)}">${getRouteTypeDisplay(route.route_type)}</span></td>
-            <td>${route.gateway || 'N/A'}</td>
-            <td>${route.distance || 'N/A'}</td>
-        </tr>
-    `).join('');
+    // Create main container
+    const deviceDetailDiv = document.createElement('div');
+    deviceDetailDiv.className = 'device-detail';
 
-    content.innerHTML = `
-        <div class="device-detail">
-            <h2>${device.hostname}</h2>
-            ${device.name ? `<p><strong>Name:</strong> ${device.name}</p>` : ''}
-            <p><strong>Device ID:</strong> ${device.device_id}</p>
-            <p><strong>Type:</strong> ${device.device_type}</p>
-            <p><strong>Owner:</strong> ${typeof device.owner === 'object' ? device.owner.Named || 'Unknown' : device.owner}</p>
-            
-            <div class="detail-section">
-                <h3>Interfaces (${device.interfaces.length})</h3>
-                <table class="interfaces-table">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>VLAN</th>
-                            <th>IP Addresses</th>
-                            <th>Comment</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${interfacesTable}
-                    </tbody>
-                </table>
-            </div>
-            
-            <div class="detail-section">
-                <h3>Routes (${device.routes.length})</h3>
-                <table class="routes-table">
-                    <thead>
-                        <tr>
-                            <th>Target</th>
-                            <th>Type</th>
-                            <th>Gateway</th>
-                            <th>Distance</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${routesTable}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    `;
+    // Device header
+    const hostname = document.createElement('h2');
+    hostname.textContent = device.hostname;
+    deviceDetailDiv.appendChild(hostname);
+
+    // Device name (optional)
+    if (device.name) {
+        const nameP = document.createElement('p');
+        const nameStrong = document.createElement('strong');
+        nameStrong.textContent = 'Name: ';
+        nameP.appendChild(nameStrong);
+        nameP.appendChild(document.createTextNode(device.name));
+        deviceDetailDiv.appendChild(nameP);
+    }
+
+    // Device ID
+    const deviceIdP = document.createElement('p');
+    const deviceIdStrong = document.createElement('strong');
+    deviceIdStrong.textContent = 'Device ID: ';
+    deviceIdP.appendChild(deviceIdStrong);
+    deviceIdP.appendChild(document.createTextNode(device.device_id));
+    deviceDetailDiv.appendChild(deviceIdP);
+
+    // Device Type
+    const deviceTypeP = document.createElement('p');
+    const deviceTypeStrong = document.createElement('strong');
+    deviceTypeStrong.textContent = 'Type: ';
+    deviceTypeP.appendChild(deviceTypeStrong);
+    deviceTypeP.appendChild(document.createTextNode(device.device_type));
+    deviceDetailDiv.appendChild(deviceTypeP);
+
+    // Owner
+    const ownerP = document.createElement('p');
+    const ownerStrong = document.createElement('strong');
+    ownerStrong.textContent = 'Owner: ';
+    ownerP.appendChild(ownerStrong);
+    const ownerText = typeof device.owner === 'object' ? device.owner.Named || 'Unknown' : device.owner;
+    ownerP.appendChild(document.createTextNode(ownerText));
+    deviceDetailDiv.appendChild(ownerP);
+
+    // Interfaces section
+    const interfacesSection = createInterfacesSection(device.interfaces);
+    deviceDetailDiv.appendChild(interfacesSection);
+
+    // Routes section
+    const routesSection = createRoutesSection(device.routes);
+    deviceDetailDiv.appendChild(routesSection);
+
+    content.appendChild(deviceDetailDiv);
 }
 
 function closeModal() {
     document.getElementById('device-modal').style.display = 'none';
+}
+
+// Helper functions for DOM creation
+function createInterfacesSection(interfaces) {
+    const section = document.createElement('div');
+    section.className = 'detail-section';
+
+    const heading = document.createElement('h3');
+    heading.textContent = `Interfaces (${interfaces.length})`;
+    section.appendChild(heading);
+
+    const table = document.createElement('table');
+    table.className = 'interfaces-table';
+
+    // Create header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const headers = ['Name', 'Type', 'VLAN', 'IP Addresses', 'Comment'];
+    headers.forEach(headerText => {
+        const th = document.createElement('th');
+        th.textContent = headerText;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    // Create body
+    const tbody = document.createElement('tbody');
+    interfaces.forEach(iface => {
+        const row = document.createElement('tr');
+
+        // Name
+        const nameCell = document.createElement('td');
+        nameCell.textContent = iface.name;
+        row.appendChild(nameCell);
+
+        // Type
+        const typeCell = document.createElement('td');
+        const typeSpan = document.createElement('span');
+        const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
+        const interfaceClass = getInterfaceTypeClass(iface.interface_type);
+        typeSpan.className = `interface-type ${interfaceClass}`;
+        typeSpan.textContent = interfaceType;
+        typeCell.appendChild(typeSpan);
+        row.appendChild(typeCell);
+
+        // VLAN
+        const vlanCell = document.createElement('td');
+        const vlansDisplay = iface.vlans && iface.vlans.length > 0 ? iface.vlans.join(', ') : 'N/A';
+        vlanCell.textContent = vlansDisplay;
+        row.appendChild(vlanCell);
+
+        // IP Addresses
+        const addressesCell = document.createElement('td');
+        addressesCell.textContent = iface.addresses.join(', ') || 'None';
+        row.appendChild(addressesCell);
+
+        // Comment
+        const commentCell = document.createElement('td');
+        commentCell.textContent = iface.comment || '';
+        row.appendChild(commentCell);
+
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    section.appendChild(table);
+
+    return section;
+}
+
+function createRoutesSection(routes) {
+    const section = document.createElement('div');
+    section.className = 'detail-section';
+
+    const heading = document.createElement('h3');
+    heading.textContent = `Routes (${routes.length})`;
+    section.appendChild(heading);
+
+    const table = document.createElement('table');
+    table.className = 'routes-table';
+
+    // Create header
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    const headers = ['Target', 'Type', 'Gateway', 'Distance'];
+    headers.forEach(headerText => {
+        const th = document.createElement('th');
+        th.textContent = headerText;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    // Create body
+    const tbody = document.createElement('tbody');
+    routes.forEach(route => {
+        const row = document.createElement('tr');
+
+        // Target
+        const targetCell = document.createElement('td');
+        targetCell.textContent = route.target;
+        row.appendChild(targetCell);
+
+        // Type
+        const typeCell = document.createElement('td');
+        const typeSpan = document.createElement('span');
+        typeSpan.className = `route-type ${getRouteTypeClass(route.route_type)}`;
+        typeSpan.textContent = getRouteTypeDisplay(route.route_type);
+        typeCell.appendChild(typeSpan);
+        row.appendChild(typeCell);
+
+        // Gateway
+        const gatewayCell = document.createElement('td');
+        gatewayCell.textContent = route.gateway || 'N/A';
+        row.appendChild(gatewayCell);
+
+        // Distance
+        const distanceCell = document.createElement('td');
+        distanceCell.textContent = route.distance || 'N/A';
+        row.appendChild(distanceCell);
+
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    section.appendChild(table);
+
+    return section;
 }
 
 // Utility Functions

@@ -153,11 +153,12 @@ function renderDeviceDetails(device) {
     const interfacesTable = device.interfaces.map(iface => {
         const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
         const interfaceClass = getInterfaceTypeClass(iface.interface_type);
+        const vlansDisplay = iface.vlans && iface.vlans.length > 0 ? iface.vlans.join(', ') : 'N/A';
         return `
             <tr>
                 <td>${iface.name}</td>
                 <td><span class="interface-type ${interfaceClass}">${interfaceType}</span></td>
-                <td>${iface.vlan || 'N/A'}</td>
+                <td>${vlansDisplay}</td>
                 <td>${iface.addresses.join(', ') || 'None'}</td>
                 <td>${iface.comment || ''}</td>
             </tr>

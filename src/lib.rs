@@ -1,4 +1,4 @@
-use std::{fmt::Display, net::IpAddr};
+use std::{collections::HashMap, fmt::Display, net::IpAddr};
 
 use cidr::errors::NetworkParseError;
 use serde::{Deserialize, Serialize};
@@ -164,12 +164,12 @@ impl std::error::Error for TrailFinderError {}
 pub struct Interface {
     pub interface_id: Uuid,
     pub name: String,
-    pub vlan: Option<u16>,
+    pub vlans: Vec<u16>,
     pub addresses: Vec<IpAddr>, // TODO: these should be CIDR's because addresses have subnet masks
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
 
-    neighbour_string_data: Option<String>,
+    neighbour_string_data: HashMap<String, String>,
     peer: Option<Uuid>,
 }
 
@@ -177,7 +177,7 @@ impl Interface {
     pub fn new(
         interface_id: Uuid,
         name: String,
-        vlan: Option<u16>,
+        vlans: Vec<u16>,
         addresses: Vec<IpAddr>,
         interface_type: InterfaceType,
         comment: Option<String>,
@@ -185,11 +185,11 @@ impl Interface {
         Self {
             interface_id,
             name,
-            vlan,
+            vlans,
             addresses,
             interface_type,
             comment,
-            neighbour_string_data: None,
+            neighbour_string_data: Default::default(),
             peer: None,
         }
     }

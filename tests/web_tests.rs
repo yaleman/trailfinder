@@ -22,7 +22,7 @@ fn create_test_device_with_routes(
     device.interfaces.push(Interface::new(
         interface_id,
         "eth0".to_string(),
-        None,
+        vec![],
         vec![IpAddr::from_str("192.168.1.1").unwrap()],
         InterfaceType::Ethernet,
         None,
@@ -69,17 +69,37 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
                     std::net::IpAddr::V6(_) => format!("{}/{}", address, 64),
                 };
 
-                let segment =
-                    networks
-                        .entry(network_key.clone())
-                        .or_insert_with(|| NetworkSegment {
-                            network: network_key,
-                            vlan_id: interface.vlan,
-                            devices: Vec::new(),
-                        });
+                if !interface.vlans.is_empty() {
+                    // If the interface has VLANs, treat each VLAN as a separate segment
+                    for vlan_id in &interface.vlans {
+                        let vlan_network_key = format!("{}-vlan{}", network_key, vlan_id);
+                        let segment =
+                            networks.entry(vlan_network_key.clone()).or_insert_with(|| {
+                                NetworkSegment {
+                                    network: vlan_network_key,
+                                    vlan_id: Some(*vlan_id),
+                                    devices: Vec::new(),
+                                }
+                            });
 
-                if !segment.devices.contains(&device_state.device.hostname) {
-                    segment.devices.push(device_state.device.hostname.clone());
+                        if !segment.devices.contains(&device_state.device.hostname) {
+                            segment.devices.push(device_state.device.hostname.clone());
+                        }
+                    }
+                } else {
+                    // If the interface is bare, treat it as a single segment
+                    let segment =
+                        networks
+                            .entry(network_key.clone())
+                            .or_insert_with(|| NetworkSegment {
+                                network: network_key,
+                                vlan_id: None,
+                                devices: Vec::new(),
+                            });
+
+                    if !segment.devices.contains(&device_state.device.hostname) {
+                        segment.devices.push(device_state.device.hostname.clone());
+                    }
                 }
             }
         }
@@ -185,7 +205,7 @@ fn test_topology_with_internal_gateway() {
     device2.device.interfaces.push(Interface::new(
         uuid::Uuid::new_v4(),
         "eth1".to_string(),
-        None,
+        vec![],
         vec![IpAddr::from_str("192.168.1.2").unwrap()], // Gateway IP
         InterfaceType::Ethernet,
         None,
@@ -303,7 +323,7 @@ fn test_topology_mixed_internal_external_gateways() {
     device2.device.interfaces.push(Interface::new(
         uuid::Uuid::new_v4(),
         "eth1".to_string(),
-        None,
+        vec![],
         vec![IpAddr::from_str("192.168.1.2").unwrap()], // Internal gateway IP
         InterfaceType::Ethernet,
         None,

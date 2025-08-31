@@ -302,7 +302,8 @@ function createDeviceDetailDiv(content, device) {
         row.appendChild(typeCell);
 
         const vlanCell = document.createElement('td');
-        vlanCell.textContent = iface.vlan || 'N/A';
+        const vlansDisplay = iface.vlans && iface.vlans.length > 0 ? iface.vlans.join(', ') : 'N/A';
+        vlanCell.textContent = vlansDisplay;
         row.appendChild(vlanCell);
 
         const addressesCell = document.createElement('td');
