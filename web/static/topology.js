@@ -78,9 +78,16 @@ function renderTopology(topology) {
     // Clear existing content
     svg.selectAll('*').remove();
 
+    // Map connections to use source/target format expected by D3
+    const links = topology.connections.map(conn => ({
+        ...conn,
+        source: conn.from,
+        target: conn.to
+    }));
+
     // Create force simulation
     const simulation = d3.forceSimulation(topology.devices)
-        .force('link', d3.forceLink(topology.connections)
+        .force('link', d3.forceLink(links)
             .id(d => d.device_id)
             .distance(100))
         .force('charge', d3.forceManyBody().strength(-300))
@@ -100,7 +107,7 @@ function renderTopology(topology) {
     // Create links
     const link = g.append('g')
         .selectAll('line')
-        .data(topology.connections)
+        .data(links)
         .enter().append('line')
         .attr('class', 'link')
         .style('stroke', d => getConnectionColor(d.connection_type))

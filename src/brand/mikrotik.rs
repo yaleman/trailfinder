@@ -214,10 +214,32 @@ impl DeviceHandler for Mikrotik {
                 RouteType::NextHop(uuid::Uuid::new_v4())
             };
 
+            // Parse gateway - could be IP address or interface name
+            let gateway = find_kv(&parts, "gateway").and_then(|gw_str| {
+                // First try to parse as IP address
+                if let Ok(ip) = gw_str.parse::<std::net::IpAddr>() {
+                    Some(ip)
+                } else {
+                    // If it's not an IP, it might be an interface name
+                    // We'll need to resolve this to an IP later by looking up the interface
+                    // For now, we'll look at immediate-gw which often has the actual IP
+                    find_kv(&parts, "immediate-gw").and_then(|immediate_gw| {
+                        // immediate-gw might be "192.168.1.1%ether1" or just "vlan10"
+                        if let Some(percent_pos) = immediate_gw.find('%') {
+                            // Extract IP part before %
+                            immediate_gw[..percent_pos].parse::<std::net::IpAddr>().ok()
+                        } else {
+                            // Try parsing the whole thing as IP
+                            immediate_gw.parse::<std::net::IpAddr>().ok()
+                        }
+                    })
+                }
+            });
+
             let route = Route {
                 target,
                 route_type,
-                gateway: None,
+                gateway,
                 distance,
             };
             // if let Ok(addr) = target.parse::<IpAddr>() {
@@ -580,7 +602,7 @@ fn test_mikrotik_cdp() {
         DeviceType::Router,
     );
 
-    let test_cisco = Cisco::test_device().build().into();
+    let test_cisco = Cisco::test_device().build();
     let result = device.parse_neighbours(test_data, vec![test_cisco]);
     assert!(result.is_ok(), "CDP parsing should succeed");
 }

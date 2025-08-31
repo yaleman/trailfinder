@@ -223,16 +223,13 @@ impl DeviceHandler for Cisco {
 
             debug!("Full block: {current_data}");
 
-            let interface = interface_parser
-                .captures(&current_data)
-                .map(|caps| {
-                    let interface_name = caps
-                        .name("interface")
-                        .map(|m| m.as_str().trim_end_matches(',').to_string());
-                    debug!("Parsed interface: {interface_name:?}");
-                    interface_name
-                })
-                .flatten();
+            let interface = interface_parser.captures(&current_data).and_then(|caps| {
+                let interface_name = caps
+                    .name("interface")
+                    .map(|m| m.as_str().trim_end_matches(',').to_string());
+                debug!("Parsed interface: {interface_name:?}");
+                interface_name
+            });
 
             // find if have this interface already, and print a success/fail message
             if let Some(interface_name) = interface {

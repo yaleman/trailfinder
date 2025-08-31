@@ -297,8 +297,8 @@ pub async fn get_network_topology(
                     for other_interface in &other_device.device.interfaces {
                         if other_interface.addresses.contains(gateway_ip) {
                             connections.push(NetworkConnection {
-                                from: device_state.device.hostname.clone(),
-                                to: other_device.device.hostname.clone(),
+                                from: device_state.device.device_id.to_string(),
+                                to: other_device.device.device_id.to_string(),
                                 interface_from: format!("route-{}", route.target),
                                 interface_to: Some(other_interface.name.clone()),
                                 connection_type: ConnectionType::Gateway,
@@ -315,7 +315,7 @@ pub async fn get_network_topology(
                 // If gateway not found in our devices, it's an external gateway
                 if !gateway_found {
                     connections.push(NetworkConnection {
-                        from: device_state.device.hostname.clone(),
+                        from: device_state.device.device_id.to_string(),
                         to: "internet".to_string(),
                         interface_from: format!("route-{}", route.target),
                         interface_to: Some(gateway_ip.to_string()),
