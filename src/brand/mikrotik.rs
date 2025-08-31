@@ -261,7 +261,7 @@ impl DeviceInterrogator for Mikrotik {
     }
 
     fn get_routes_command(&self) -> String {
-        "/ipv6/route print detail without-paging; /ip route print detail without-paging".to_string()
+        "/ipv6 route print detail without-paging; /ip route print detail without-paging".to_string()
     }
 
     #[allow(clippy::manual_async_fn)]
