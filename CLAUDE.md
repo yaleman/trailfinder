@@ -117,3 +117,4 @@ See TODO.md for the current development plan and task status.
 - update TODO.md with tasks before and after they're done
 - if wanting to test the app, just use cargo run rather than cargo build then running the binary
 - always use a todo list when working on complex tasks to track progress and remain on track
+- don't ever use .innerHTML  to update content of a tag in javascript
