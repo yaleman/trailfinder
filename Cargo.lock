@@ -1729,6 +1729,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
+name = "mac_address"
+version = "1.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0aeb26bf5e836cc1c341c8106051b573f1766dfa05aa87f0b98be5e51b02303"
+dependencies = [
+ "nix",
+ "serde",
+ "winapi",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1754,6 +1765,15 @@ name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "mime"
@@ -1824,6 +1844,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -3460,6 +3481,7 @@ dependencies = [
  "cidr",
  "clap",
  "dirs",
+ "mac_address",
  "regex",
  "reqwest",
  "russh",

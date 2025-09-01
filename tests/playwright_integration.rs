@@ -1,14 +1,13 @@
+//! Playwright integration tests for Trailfinder web functionality
+//!
+//! These tests verify:
+//! 1. Interface addresses display correctly with IP/prefix format
+//! 2. Multiple VLANs display correctly
+//! 3. Internet node appears in topology for external gateways
+//! 4. Device details modal works with new data structures
 use std::time::Duration;
 use tokio::time::sleep;
 use trailfinder::{config::AppConfig, web::web_server_command};
-
-/// Playwright integration tests for Trailfinder web functionality
-///
-/// These tests verify:
-/// 1. Interface addresses display correctly with IP/prefix format
-/// 2. Multiple VLANs display correctly
-/// 3. Internet node appears in topology for external gateways
-/// 4. Device details modal works with new data structures
 
 #[cfg(test)]
 mod playwright_tests {
@@ -89,15 +88,4 @@ mod playwright_tests {
         // Clean up
         server_handle.abort();
     }
-}
-
-/// Actual Playwright browser tests
-/// Note: These require the MCP Playwright integration to be available
-#[cfg(feature = "playwright")]
-mod browser_tests {
-    use super::*;
-
-    // These would be actual Playwright tests using the MCP integration
-    // For now, they're disabled by the feature flag since they require
-    // the browser automation to be set up
 }

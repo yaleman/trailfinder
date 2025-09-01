@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Display, net::IpAddr};
 
 use cidr::errors::NetworkParseError;
+use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -192,6 +193,50 @@ impl Display for InterfaceAddress {
     }
 }
 
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub enum PeerConnection {
+    /// Direct interface connection, no VLAN tagging
+    Untagged,
+    /// Connection through specific VLAN ID
+    Vlan(u16),
+    /// Trunk port carrying multiple VLANs
+    Trunk,
+    /// Out-of-band management connection
+    Management,
+    /// VPN or other tunnel connection with identifier
+    Tunnel(String),
+}
+
+impl Display for PeerConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PeerConnection::Untagged => write!(f, "Untagged"),
+            PeerConnection::Vlan(id) => write!(f, "VLAN {}", id),
+            PeerConnection::Trunk => write!(f, "Trunk"),
+            PeerConnection::Management => write!(f, "Management"),
+            PeerConnection::Tunnel(name) => write!(f, "Tunnel({})", name),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NeighborInfo {
+    /// Hostname of the remote device
+    pub remote_hostname: String,
+    /// Interface name on the remote device (as reported by CDP/LLDP)
+    pub remote_interface: String,
+    /// MAC address of the remote device interface (if available)
+    pub remote_mac_address: Option<MacAddress>,
+    /// UUID reference to the local interface
+    pub local_interface_id: Uuid,
+    /// MAC address of the local interface (if available)
+    pub local_mac_address: Option<MacAddress>,
+    /// Type of peer connection (VLAN, trunk, etc.)
+    pub connection_type: PeerConnection,
+    /// Discovery protocol used (CDP, LLDP, etc.)
+    pub discovery_protocol: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Interface {
     pub interface_id: Uuid,
@@ -200,12 +245,14 @@ pub struct Interface {
     pub addresses: Vec<InterfaceAddress>,
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
+    /// MAC address of this interface (if available)
+    pub mac_address: Option<MacAddress>,
 
     /// Storing neighbour discovery data
     neighbour_string_data: HashMap<String, String>,
     /// This stores the peers discovered by CDP and anything else we can figure out
-    /// 0 is without vlan, everything else is a vlan-peer
-    peers: HashMap<u16, Vec<Uuid>>,
+    /// Keyed by connection type (Untagged, VLAN, Trunk, etc.)
+    pub peers: HashMap<PeerConnection, Vec<Uuid>>,
 }
 
 impl Interface {
@@ -224,13 +271,404 @@ impl Interface {
             addresses,
             interface_type,
             comment,
+            mac_address: None,
             neighbour_string_data: Default::default(),
             peers: Default::default(),
         }
     }
 
+    pub fn with_mac_address(mut self, mac_address: MacAddress) -> Self {
+        self.mac_address = Some(mac_address);
+        self
+    }
+
     pub fn interface_id(&self, device_id: &uuid::Uuid) -> String {
         format!("{}:{}:{}", device_id, self.name, self.interface_type)
+    }
+}
+
+/// Utility functions for neighbor discovery and VLAN parsing
+impl NeighborInfo {
+    /// Parse VLAN ID from interface name
+    /// Examples: "vlan40" -> Some(40), "Vlan20" -> Some(20), "GigabitEthernet1/0/1" -> None
+    pub fn parse_vlan_from_interface_name(interface_name: &str) -> Option<u16> {
+        if let Some(vlan_str) = interface_name.strip_prefix("vlan") {
+            vlan_str.parse().ok()
+        } else if let Some(vlan_str) = interface_name.strip_prefix("Vlan") {
+            vlan_str.parse().ok()
+        } else {
+            None
+        }
+    }
+
+    /// Determine PeerConnection type from interface name and VLAN information
+    pub fn determine_connection_type(
+        interface_name: &str,
+        vlan_info: Option<u16>,
+    ) -> PeerConnection {
+        // Check if this is a VLAN interface
+        if let Some(vlan_id) = Self::parse_vlan_from_interface_name(interface_name) {
+            return PeerConnection::Vlan(vlan_id);
+        }
+
+        // Check for explicit VLAN info
+        if let Some(vlan_id) = vlan_info {
+            return PeerConnection::Vlan(vlan_id);
+        }
+
+        // Check for management interfaces
+        if interface_name.to_lowercase().contains("management")
+            || interface_name.to_lowercase().contains("mgmt")
+        {
+            return PeerConnection::Management;
+        }
+
+        // Check for tunnel interfaces
+        if interface_name.to_lowercase().starts_with("tunnel")
+            || interface_name.to_lowercase().starts_with("vpn")
+        {
+            return PeerConnection::Tunnel(interface_name.to_string());
+        }
+
+        // Default to untagged for regular physical interfaces
+        PeerConnection::Untagged
+    }
+}
+
+/// Utility functions for device-level operations
+impl Device {
+    /// Find interface UUID by name
+    pub fn find_interface_id_by_name(&self, name: &str) -> Option<Uuid> {
+        self.interfaces
+            .iter()
+            .find(|iface| iface.name == name)
+            .map(|iface| iface.interface_id)
+    }
+
+    /// Validate that an interface UUID exists in this device
+    pub fn has_interface_id(&self, interface_id: Uuid) -> bool {
+        self.interfaces
+            .iter()
+            .any(|iface| iface.interface_id == interface_id)
+    }
+
+    /// Get mutable reference to interface by UUID
+    pub fn get_interface_mut(&mut self, interface_id: Uuid) -> Option<&mut Interface> {
+        self.interfaces
+            .iter_mut()
+            .find(|iface| iface.interface_id == interface_id)
+    }
+
+    /// Get interface by UUID
+    pub fn get_interface(&self, interface_id: Uuid) -> Option<&Interface> {
+        self.interfaces
+            .iter()
+            .find(|iface| iface.interface_id == interface_id)
+    }
+}
+
+/// Global neighbor discovery and resolution system
+pub mod neighbor_resolution {
+    use super::*;
+    use crate::config::DeviceState;
+    use tracing::{debug, info, warn};
+
+    /// Resolve all neighbor relationships across all devices
+    /// This processes CDP/LLDP data and establishes bidirectional peer relationships
+    pub fn resolve_all_neighbor_relationships(
+        device_states: &mut [DeviceState],
+    ) -> Result<usize, TrailFinderError> {
+        let mut relationships_established = 0;
+
+        // First pass: collect all neighbor data and convert to structured format
+        let mut all_neighbor_info: Vec<(usize, Vec<NeighborInfo>)> = Vec::new();
+
+        for (device_index, device_state) in device_states.iter().enumerate() {
+            let neighbors = extract_neighbor_info_from_device(device_state)?;
+            if !neighbors.is_empty() {
+                debug!(
+                    "Device {} has {} neighbors",
+                    device_state.device.hostname,
+                    neighbors.len()
+                );
+                all_neighbor_info.push((device_index, neighbors));
+            }
+        }
+
+        // Second pass: resolve neighbors and establish bidirectional relationships
+        for (device_index, neighbors) in all_neighbor_info {
+            let device_hostname = device_states[device_index].device.hostname.clone();
+
+            for neighbor_info in neighbors {
+                // Find the peer device by hostname (with fuzzy matching)
+                if let Some(peer_device_index) =
+                    find_device_by_hostname_fuzzy(&neighbor_info.remote_hostname, device_states)
+                {
+                    if peer_device_index == device_index {
+                        continue; // Skip self-references
+                    }
+
+                    // Validate local interface exists
+                    if !device_states[device_index]
+                        .device
+                        .has_interface_id(neighbor_info.local_interface_id)
+                    {
+                        warn!(
+                            "Invalid local interface ID {} in neighbor data for device {}",
+                            neighbor_info.local_interface_id, device_hostname
+                        );
+                        continue;
+                    }
+
+                    // Find peer interface by name
+                    let peer_interface_id = if neighbor_info.remote_interface == "unknown" {
+                        // For MikroTik neighbor data, we don't know the remote interface
+                        // Try to find it by looking for interfaces that might be connected
+                        // For now, just skip this relationship - it requires bilateral discovery
+                        debug!("Skipping peer relationship with unknown remote interface");
+                        None
+                    } else {
+                        device_states[peer_device_index]
+                            .device
+                            .find_interface_id_by_name(&neighbor_info.remote_interface)
+                    };
+                    let peer_device_hostname =
+                        device_states[peer_device_index].device.hostname.clone();
+
+                    if let Some(peer_interface_id) = peer_interface_id {
+                        // Get interface name for logging before borrowing mutably
+                        let local_interface_name = device_states[device_index]
+                            .device
+                            .get_interface(neighbor_info.local_interface_id)
+                            .map(|i| i.name.clone())
+                            .unwrap_or_else(|| "unknown".to_string());
+
+                        // Establish bidirectional peer relationship using split_at_mut to avoid borrow conflicts
+                        if device_index < peer_device_index {
+                            let (left, right) = device_states.split_at_mut(peer_device_index);
+                            establish_bidirectional_peer_relationship(
+                                &mut left[device_index],
+                                neighbor_info.local_interface_id,
+                                &mut right[0],
+                                peer_interface_id,
+                                &neighbor_info.connection_type,
+                            )?;
+                        } else {
+                            let (left, right) = device_states.split_at_mut(device_index);
+                            establish_bidirectional_peer_relationship(
+                                &mut right[0],
+                                neighbor_info.local_interface_id,
+                                &mut left[peer_device_index],
+                                peer_interface_id,
+                                &neighbor_info.connection_type,
+                            )?;
+                        }
+
+                        relationships_established += 1;
+                        info!(
+                            "Established peer relationship: {}:{} <-> {}:{}",
+                            device_hostname,
+                            local_interface_name,
+                            peer_device_hostname,
+                            neighbor_info.remote_interface
+                        );
+                    } else {
+                        warn!(
+                            "Could not find interface '{}' on peer device '{}'",
+                            neighbor_info.remote_interface, neighbor_info.remote_hostname
+                        );
+                    }
+                } else {
+                    debug!(
+                        "Could not find peer device for hostname '{}'",
+                        neighbor_info.remote_hostname
+                    );
+                }
+            }
+        }
+
+        info!(
+            "Established {} neighbor relationships",
+            relationships_established
+        );
+        Ok(relationships_established)
+    }
+
+    /// Extract structured neighbor information from raw CDP/LLDP data
+    fn extract_neighbor_info_from_device(
+        device_state: &DeviceState,
+    ) -> Result<Vec<NeighborInfo>, TrailFinderError> {
+        let mut neighbor_infos = Vec::new();
+
+        for interface in &device_state.device.interfaces {
+            for raw_neighbor_data in interface.neighbour_string_data.values() {
+                // Parse the raw neighbor data based on the discovery protocol
+                let neighbor_info = parse_raw_neighbor_data(
+                    raw_neighbor_data,
+                    interface.interface_id,
+                    interface.mac_address,
+                )?;
+
+                neighbor_infos.push(neighbor_info);
+            }
+        }
+
+        Ok(neighbor_infos)
+    }
+
+    /// Parse raw neighbor data (CDP/LLDP) into structured NeighborInfo
+    fn parse_raw_neighbor_data(
+        raw_data: &str,
+        local_interface_id: Uuid,
+        local_mac: Option<MacAddress>,
+    ) -> Result<NeighborInfo, TrailFinderError> {
+        // For now, implement basic CDP parsing
+        // This is a simplified version - real implementation would be more robust
+
+        // Look for hostname in the raw data
+        let remote_hostname =
+            extract_hostname_from_cdp(raw_data).unwrap_or_else(|| "unknown".to_string());
+
+        // Look for remote interface
+        let remote_interface =
+            extract_remote_interface_from_cdp(raw_data).unwrap_or_else(|| "unknown".to_string());
+
+        // Determine connection type from interface names
+        let connection_type = NeighborInfo::determine_connection_type(&remote_interface, None);
+
+        Ok(NeighborInfo {
+            remote_hostname,
+            remote_interface,
+            remote_mac_address: None, // Would be parsed from CDP data
+            local_interface_id,
+            local_mac_address: local_mac,
+            connection_type,
+            discovery_protocol: "CDP".to_string(),
+        })
+    }
+
+    /// Extract hostname from CDP data
+    fn extract_hostname_from_cdp(cdp_data: &str) -> Option<String> {
+        // Look for common CDP hostname patterns
+        for line in cdp_data.lines() {
+            let line = line.trim();
+            if line.starts_with("Device ID:") {
+                return Some(line.strip_prefix("Device ID:")?.trim().to_string());
+            }
+
+            // Handle MikroTik neighbor format: "0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.housenet.yaleman.org"
+            if !line.is_empty() && !line.starts_with('#') && !line.starts_with("Columns:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 && parts[0].chars().all(|c| c.is_numeric()) {
+                    // MikroTik format: index, interface, address, mac, identity
+                    return Some(parts[4].to_string());
+                }
+
+                // Handle Cisco CDP format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
+                if parts.len() >= 6
+                    && !parts[0].starts_with("Device")
+                    && !parts[0].starts_with("Capability")
+                {
+                    return Some(parts[0].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract remote interface from CDP data
+    fn extract_remote_interface_from_cdp(cdp_data: &str) -> Option<String> {
+        // Look for interface information in CDP data
+        for line in cdp_data.lines() {
+            let line = line.trim();
+            if line.contains("Port ID (outgoing port):") {
+                return Some(
+                    line.split("Port ID (outgoing port):")
+                        .nth(1)?
+                        .trim()
+                        .to_string(),
+                );
+            }
+
+            // Handle MikroTik neighbor format - the interface is already parsed and stored elsewhere
+            // For MikroTik data, we don't have the remote interface in the neighbor data
+            // Return a generic value for now
+            if !line.is_empty() && !line.starts_with('#') && !line.starts_with("Columns:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 && parts[0].chars().all(|c| c.is_numeric()) {
+                    // MikroTik format doesn't provide remote interface info in neighbor data
+                    return Some("unknown".to_string());
+                }
+
+                // Handle Cisco CDP format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
+                // The last field might be the remote interface
+                if parts.len() >= 6
+                    && !parts[0].starts_with("Device")
+                    && !parts[0].starts_with("Capability")
+                {
+                    return Some(parts.last()?.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Find device by hostname with fuzzy matching
+    fn find_device_by_hostname_fuzzy(
+        hostname: &str,
+        device_states: &[DeviceState],
+    ) -> Option<usize> {
+        // First try exact match (case-insensitive)
+        for (index, device_state) in device_states.iter().enumerate() {
+            if device_state.device.hostname.eq_ignore_ascii_case(hostname) {
+                return Some(index);
+            }
+        }
+
+        // Try without domain (case-insensitive)
+        let hostname_short = hostname.split('.').next().unwrap_or(hostname);
+        for (index, device_state) in device_states.iter().enumerate() {
+            let device_hostname_short = device_state
+                .device
+                .hostname
+                .split('.')
+                .next()
+                .unwrap_or(&device_state.device.hostname);
+            if device_hostname_short.eq_ignore_ascii_case(hostname_short) {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
+    /// Establish bidirectional peer relationship between two interfaces
+    fn establish_bidirectional_peer_relationship(
+        device_a: &mut DeviceState,
+        interface_a_id: Uuid,
+        device_b: &mut DeviceState,
+        interface_b_id: Uuid,
+        connection_type: &PeerConnection,
+    ) -> Result<(), TrailFinderError> {
+        // Add device B as peer to device A's interface
+        if let Some(interface_a) = device_a.device.get_interface_mut(interface_a_id) {
+            interface_a
+                .peers
+                .entry(connection_type.clone())
+                .or_default()
+                .push(device_b.device.device_id);
+        }
+
+        // Add device A as peer to device B's interface
+        if let Some(interface_b) = device_b.device.get_interface_mut(interface_b_id) {
+            interface_b
+                .peers
+                .entry(connection_type.clone())
+                .or_default()
+                .push(device_a.device.device_id);
+        }
+
+        Ok(())
     }
 }
 

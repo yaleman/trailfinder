@@ -1,10 +1,12 @@
+use mac_address::MacAddress;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
 use trailfinder::config::DeviceState;
 use trailfinder::web::*;
 use trailfinder::{
-    Device, DeviceType, Interface, InterfaceAddress, InterfaceType, Owner, Route, RouteType,
+    Device, DeviceType, Interface, InterfaceAddress, InterfaceType, Owner, PeerConnection, Route,
+    RouteType,
 };
 
 fn create_test_device_with_routes(
@@ -154,6 +156,44 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
                         interface_to: Some(gateway_ip.to_string()),
                         connection_type: ConnectionType::Internet,
                     });
+                }
+            }
+        }
+
+        // Find CDP/neighbor connections through peer relationships
+        for interface in &device_state.device.interfaces {
+            for (peer_connection, peer_interface_ids) in &interface.peers {
+                for peer_interface_id in peer_interface_ids {
+                    // Find the peer interface in other devices
+                    for other_device in &device_states {
+                        if other_device.device.hostname == device_state.device.hostname {
+                            continue;
+                        }
+
+                        if let Some(peer_interface) = other_device
+                            .device
+                            .interfaces
+                            .iter()
+                            .find(|iface| iface.interface_id == *peer_interface_id)
+                        {
+                            // Create CDP connection
+                            let connection_info = match peer_connection {
+                                PeerConnection::Untagged => "CDP",
+                                PeerConnection::Vlan(vlan_id) => &format!("CDP-VLAN{}", vlan_id),
+                                PeerConnection::Trunk => "CDP-Trunk",
+                                PeerConnection::Management => "CDP-Management",
+                                PeerConnection::Tunnel(name) => &format!("CDP-Tunnel({})", name),
+                            };
+
+                            connections.push(NetworkConnection {
+                                from: device_state.device.device_id.to_string(),
+                                to: other_device.device.device_id.to_string(),
+                                interface_from: format!("{} ({})", interface.name, connection_info),
+                                interface_to: Some(peer_interface.name.clone()),
+                                connection_type: ConnectionType::CDP,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -367,4 +407,200 @@ fn test_topology_mixed_internal_external_gateways() {
 
     assert_eq!(internal_connections, 1);
     assert_eq!(internet_connections, 1);
+}
+
+#[test]
+fn test_topology_with_cdp_peer_relationships() {
+    // Test case: CDP peer relationships between devices
+    let interface_id1 = uuid::Uuid::new_v4();
+    let interface_id2 = uuid::Uuid::new_v4();
+
+    // Create first device with CDP peers
+    let mut device1 = Device::new(
+        "device1.local".to_string(),
+        Some("Test Device 1".to_string()),
+        Owner::Named("test".to_string()),
+        DeviceType::Switch,
+    );
+
+    let mut interface1 = Interface::new(
+        interface_id1,
+        "GigabitEthernet0/1".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.1").unwrap(),
+            24,
+        )],
+        InterfaceType::Ethernet,
+        None,
+    );
+
+    // Add MAC address and peer relationship
+    interface1.mac_address = Some(MacAddress::from_str("00:11:22:33:44:55").unwrap());
+    let mut peers = HashMap::new();
+    peers.insert(PeerConnection::Untagged, vec![interface_id2]);
+    interface1.peers = peers;
+    device1.interfaces.push(interface1);
+
+    // Create second device with reciprocal CDP peer
+    let mut device2 = Device::new(
+        "device2.local".to_string(),
+        Some("Test Device 2".to_string()),
+        Owner::Named("test".to_string()),
+        DeviceType::Switch,
+    );
+
+    let mut interface2 = Interface::new(
+        interface_id2,
+        "GigabitEthernet0/2".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.2").unwrap(),
+            24,
+        )],
+        InterfaceType::Ethernet,
+        None,
+    );
+
+    // Add MAC address and peer relationship
+    interface2.mac_address = Some(MacAddress::from_str("aa:bb:cc:dd:ee:ff").unwrap());
+    let mut peers2 = HashMap::new();
+    peers2.insert(PeerConnection::Untagged, vec![interface_id1]);
+    interface2.peers = peers2;
+    device2.interfaces.push(interface2);
+
+    // Create device states
+    let device_state1 = DeviceState {
+        device: device1,
+        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        config_hash: 12345u64,
+    };
+
+    let device_state2 = DeviceState {
+        device: device2,
+        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        config_hash: 67890u64,
+    };
+
+    // Store device IDs before moving the device states
+    let device1_id = device_state1.device.device_id;
+    let device2_id = device_state2.device.device_id;
+
+    let topology = build_test_topology(vec![device_state1, device_state2]);
+
+    // Should create CDP connections between devices
+    assert_eq!(topology.devices.len(), 2);
+    assert_eq!(topology.connections.len(), 2); // Bidirectional CDP connections
+
+    // Check CDP connections
+    let cdp_connections: Vec<_> = topology
+        .connections
+        .iter()
+        .filter(|c| matches!(c.connection_type, ConnectionType::CDP))
+        .collect();
+    assert_eq!(cdp_connections.len(), 2);
+
+    // Verify bidirectional connections (check device IDs, not hostnames)
+    let device1_id_str = device1_id.to_string();
+    let device2_id_str = device2_id.to_string();
+    let from_devices: Vec<&String> = cdp_connections.iter().map(|c| &c.from).collect();
+    assert!(from_devices.contains(&&device1_id_str) && from_devices.contains(&&device2_id_str));
+
+    // Check interface information is preserved
+    assert!(
+        cdp_connections[0]
+            .interface_from
+            .contains("GigabitEthernet")
+    );
+    assert!(cdp_connections[0].interface_from.contains("CDP"));
+}
+
+#[test]
+fn test_topology_with_vlan_cdp_relationships() {
+    // Test case: CDP peer relationships with VLAN tags
+    let interface_id1 = uuid::Uuid::new_v4();
+    let interface_id2 = uuid::Uuid::new_v4();
+
+    // Create device with VLAN-tagged CDP peer
+    let mut device1 = Device::new(
+        "switch1.local".to_string(),
+        Some("Test Switch 1".to_string()),
+        Owner::Named("test".to_string()),
+        DeviceType::Switch,
+    );
+
+    let mut interface1 = Interface::new(
+        interface_id1,
+        "eth0.100".to_string(),
+        vec![100],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.100.1").unwrap(),
+            24,
+        )],
+        InterfaceType::Ethernet,
+        None,
+    );
+
+    // Add VLAN-tagged peer relationship
+    interface1.mac_address = Some(MacAddress::from_str("00:11:22:33:44:55").unwrap());
+    let mut peers = HashMap::new();
+    peers.insert(PeerConnection::Vlan(100), vec![interface_id2]);
+    interface1.peers = peers;
+    device1.interfaces.push(interface1);
+
+    // Create second device
+    let mut device2 = Device::new(
+        "switch2.local".to_string(),
+        Some("Test Switch 2".to_string()),
+        Owner::Named("test".to_string()),
+        DeviceType::Switch,
+    );
+
+    let mut interface2 = Interface::new(
+        interface_id2,
+        "eth0.100".to_string(),
+        vec![100],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.100.2").unwrap(),
+            24,
+        )],
+        InterfaceType::Ethernet,
+        None,
+    );
+
+    interface2.mac_address = Some(MacAddress::from_str("aa:bb:cc:dd:ee:ff").unwrap());
+    let mut peers2 = HashMap::new();
+    peers2.insert(PeerConnection::Vlan(100), vec![interface_id1]);
+    interface2.peers = peers2;
+    device2.interfaces.push(interface2);
+
+    // Create device states
+    let device_state1 = DeviceState {
+        device: device1,
+        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        config_hash: 12345u64,
+    };
+
+    let device_state2 = DeviceState {
+        device: device2,
+        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        config_hash: 67890u64,
+    };
+
+    let topology = build_test_topology(vec![device_state1, device_state2]);
+
+    // Should create VLAN-tagged CDP connections
+    assert_eq!(topology.devices.len(), 2);
+    assert_eq!(topology.connections.len(), 2);
+
+    // Check VLAN CDP connections
+    let vlan_cdp_connections: Vec<_> = topology
+        .connections
+        .iter()
+        .filter(|c| {
+            matches!(c.connection_type, ConnectionType::CDP)
+                && c.interface_from.contains("CDP-VLAN100")
+        })
+        .collect();
+    assert_eq!(vlan_cdp_connections.len(), 2);
 }

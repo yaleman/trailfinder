@@ -127,10 +127,10 @@ async fn test_end_to_end_functionality() {
             if let Some(routes) = device_detail.get("routes").and_then(|r| r.as_array()) {
                 devices_with_routes += 1;
                 for route in routes {
-                    if let Some(gateway) = route.get("gateway") {
-                        if !gateway.is_null() {
-                            routes_with_gateways += 1;
-                        }
+                    if let Some(gateway) = route.get("gateway")
+                        && !gateway.is_null()
+                    {
+                        routes_with_gateways += 1;
                     }
                 }
             }

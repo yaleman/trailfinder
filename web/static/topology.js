@@ -393,7 +393,8 @@ function getConnectionColor(connectionType) {
         'DirectLink': '#2ecc71',
         'Gateway': '#e74c3c',
         'SameNetwork': '#f39c12',
-        'Internet': '#9b59b6'
+        'Internet': '#9b59b6',
+        'CDP': '#3498db'
     };
     return colors[connectionType] || '#999';
 }

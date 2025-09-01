@@ -278,6 +278,34 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn load_all_device_states(
+        &self,
+    ) -> Result<std::collections::HashMap<String, DeviceState>, Box<dyn std::error::Error>> {
+        use std::collections::HashMap;
+
+        let mut device_states = HashMap::new();
+        let state_dir = std::path::Path::new(self.get_state_directory());
+
+        if !state_dir.exists() {
+            return Ok(device_states); // Return empty map if directory doesn't exist
+        }
+
+        // Iterate through all devices and try to load their states
+        for device in &self.devices {
+            match self.load_device_state(&device.hostname) {
+                Ok(state) => {
+                    device_states.insert(device.hostname.clone(), state);
+                }
+                Err(e) => {
+                    // Log but don't fail if we can't load one device state
+                    tracing::debug!("Could not load device state for {}: {}", device.hostname, e);
+                }
+            }
+        }
+
+        Ok(device_states)
+    }
+
     pub fn has_state_file(&self, hostname: &str) -> bool {
         self.get_state_file_path(hostname).exists()
     }

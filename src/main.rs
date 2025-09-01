@@ -283,6 +283,39 @@ async fn identify_command(
         }
     }
 
+    // Resolve all neighbor relationships after device identification
+    let device_states = app_config
+        .load_all_device_states()
+        .map_err(|e| TrailFinderError::Generic(e.to_string()))?;
+    if !device_states.is_empty() {
+        let mut device_states_vec = device_states.into_values().collect::<Vec<_>>();
+        match trailfinder::neighbor_resolution::resolve_all_neighbor_relationships(
+            &mut device_states_vec,
+        ) {
+            Ok(relationships) => {
+                if relationships > 0 {
+                    info!("Resolved {} neighbor relationships", relationships);
+                    // Save updated device states with peer relationships
+                    for device_state in device_states_vec {
+                        if let Err(e) = app_config
+                            .save_device_state(&device_state.device.hostname, &device_state)
+                        {
+                            warn!(
+                                "Failed to save updated device state for {}: {}",
+                                device_state.device.hostname, e
+                            );
+                        }
+                    }
+                } else {
+                    info!("No neighbor relationships found to resolve");
+                }
+            }
+            Err(e) => {
+                warn!("Failed to resolve neighbor relationships: {}", e);
+            }
+        }
+    }
+
     // Save updated configuration
     app_config.save_to_file(config_path)?;
     info!("Updated configuration saved to {}", config_path);
@@ -381,6 +414,39 @@ async fn update_command(
                 error!("Failed to update {}", e);
             }
             Ok(Err(e)) => return Err(e),
+        }
+    }
+
+    // Resolve all neighbor relationships after device updates
+    let device_states = app_config
+        .load_all_device_states()
+        .map_err(|e| TrailFinderError::Generic(e.to_string()))?;
+    if !device_states.is_empty() {
+        let mut device_states_vec = device_states.into_values().collect::<Vec<_>>();
+        match trailfinder::neighbor_resolution::resolve_all_neighbor_relationships(
+            &mut device_states_vec,
+        ) {
+            Ok(relationships) => {
+                if relationships > 0 {
+                    info!("Resolved {} neighbor relationships", relationships);
+                    // Save updated device states with peer relationships
+                    for device_state in device_states_vec {
+                        if let Err(e) = app_config
+                            .save_device_state(&device_state.device.hostname, &device_state)
+                        {
+                            warn!(
+                                "Failed to save updated device state for {}: {}",
+                                device_state.device.hostname, e
+                            );
+                        }
+                    }
+                } else {
+                    info!("No neighbor relationships found to resolve");
+                }
+            }
+            Err(e) => {
+                warn!("Failed to resolve neighbor relationships: {}", e);
+            }
         }
     }
 

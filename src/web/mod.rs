@@ -15,7 +15,9 @@ use tower_http::{
 };
 use tracing::{Level, debug, info, instrument, warn};
 
-use crate::{Device, DeviceType, config::AppConfig, web::on_response::DefaultOnResponse};
+use crate::{
+    Device, DeviceType, PeerConnection, config::AppConfig, web::on_response::DefaultOnResponse,
+};
 use uuid::Uuid;
 
 pub(crate) mod on_response;
@@ -86,12 +88,13 @@ pub struct NetworkConnection {
     pub connection_type: ConnectionType,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub enum ConnectionType {
     DirectLink,
     Gateway,
     SameNetwork,
     Internet,
+    CDP,
 }
 
 #[derive(Serialize)]
@@ -369,6 +372,44 @@ pub async fn get_network_topology(
                         interface_to: Some(gateway_ip.to_string()),
                         connection_type: ConnectionType::Internet,
                     });
+                }
+            }
+        }
+
+        // Find CDP/neighbor connections through peer relationships
+        for interface in &device_state.device.interfaces {
+            for (peer_connection, peer_interface_ids) in &interface.peers {
+                for peer_interface_id in peer_interface_ids {
+                    // Find the peer interface in other devices
+                    for other_device in &device_states {
+                        if other_device.device.hostname == device_state.device.hostname {
+                            continue;
+                        }
+
+                        if let Some(peer_interface) = other_device
+                            .device
+                            .interfaces
+                            .iter()
+                            .find(|iface| iface.interface_id == *peer_interface_id)
+                        {
+                            // Create CDP connection
+                            let connection_info = match peer_connection {
+                                PeerConnection::Untagged => "CDP",
+                                PeerConnection::Vlan(vlan_id) => &format!("CDP-VLAN{}", vlan_id),
+                                PeerConnection::Trunk => "CDP-Trunk",
+                                PeerConnection::Management => "CDP-Management",
+                                PeerConnection::Tunnel(name) => &format!("CDP-Tunnel({})", name),
+                            };
+
+                            connections.push(NetworkConnection {
+                                from: device_state.device.device_id.to_string(),
+                                to: other_device.device.device_id.to_string(),
+                                interface_from: format!("{} ({})", interface.name, connection_info),
+                                interface_to: Some(peer_interface.name.clone()),
+                                connection_type: ConnectionType::CDP,
+                            });
+                        }
+                    }
                 }
             }
         }

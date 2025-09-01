@@ -1,5 +1,6 @@
 use cidr::IpCidr;
 use regex::Regex;
+use std::str::FromStr;
 use tracing::{debug, error, trace};
 use uuid::Uuid;
 
@@ -50,9 +51,14 @@ impl DeviceHandler for Cisco {
     }
 
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
-        for line in input_data.lines() {
-            let line = line.trim();
+        let lines: Vec<&str> = input_data.lines().map(|l| l.trim()).collect();
+        let mac_regex = Regex::new(r"address is ([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4})")?;
+        let mut i = 0;
+
+        while i < lines.len() {
+            let line = lines[i];
             if line.is_empty() || line.starts_with('#') {
+                i += 1;
                 continue;
             }
 
@@ -62,6 +68,7 @@ impl DeviceHandler for Cisco {
             if line.contains(" is ") && (line.contains(" up") || line.contains(" down")) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.is_empty() {
+                    i += 1;
                     continue;
                 }
 
@@ -95,6 +102,42 @@ impl DeviceHandler for Cisco {
                     None
                 };
 
+                // Parse MAC address from the following lines
+                let mut mac_address = None;
+                let mut j = i + 1;
+
+                // Look ahead for MAC address in "Hardware is ... address is ..." line
+                while j < lines.len() && j < i + 10 {
+                    // Limit look-ahead to avoid infinite loops
+                    let detail_line = lines[j];
+                    if detail_line.is_empty() {
+                        break; // End of this interface block
+                    }
+
+                    // Look for "Hardware is ... address is 0050.56c0.0001"
+                    if detail_line.contains("Hardware is") && detail_line.contains("address is") {
+                        // Extract MAC address using regex
+                        if let Some(captures) = mac_regex.captures(detail_line)
+                            && let Some(mac_match) = captures.get(1)
+                        {
+                            // Convert Cisco format (0050.56c0.0001) to standard format (005056c00001)
+                            mac_address = mac_address::MacAddress::from_str(
+                                &mac_match.as_str().replace(".", ""),
+                            )
+                            .inspect_err(|e| {
+                                debug!(
+                                    "Failed to parse MAC address '{}': {}",
+                                    mac_match.as_str(),
+                                    e
+                                );
+                            })
+                            .ok();
+                        }
+                        break;
+                    }
+                    j += 1;
+                }
+
                 let interface = Interface {
                     interface_id: Uuid::new_v4(),
                     name: interface_name,
@@ -102,12 +145,14 @@ impl DeviceHandler for Cisco {
                     addresses: Vec::new(), // IP addresses would need separate parsing
                     interface_type,
                     comment: None,
+                    mac_address,
                     neighbour_string_data: Default::default(),
                     peers: Default::default(),
                 };
 
                 self.interfaces.push(interface);
             }
+            i += 1;
         }
 
         Ok(())
@@ -304,6 +349,10 @@ impl DeviceHandler for Cisco {
             let routes_command = self.get_routes_command();
             let routes_output = ssh_client.execute_command(&routes_command).await?;
 
+            // Get CDP/neighbor data
+            let cdp_command = self.get_cdp_command();
+            let cdp_output = ssh_client.execute_command(&cdp_command).await?;
+
             // Parse the data using the existing ConfParser implementation
             let mut parser = Cisco::new(
                 device_config.hostname.clone(),
@@ -315,6 +364,9 @@ impl DeviceHandler for Cisco {
             parser.parse_interfaces(&interfaces_output)?;
             parser.parse_routes(&routes_output)?;
 
+            // Store raw CDP data in interfaces for later global processing
+            parser.store_raw_cdp_data(&cdp_output)?;
+
             let device = parser.build();
 
             // Combine both outputs for config hash
@@ -325,6 +377,83 @@ impl DeviceHandler for Cisco {
             );
             Ok(DeviceState::new(device, &combined_config))
         }
+    }
+}
+
+impl Cisco {
+    /// Store raw CDP/neighbor data in interfaces for later global processing
+    pub fn store_raw_cdp_data(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
+        debug!("Storing raw CDP data: {input_data}");
+
+        // Parse Cisco CDP neighbor output
+        // Example output format:
+        // Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID
+        // c3650.example.co Gig 1/0/1         144             R S   WS-C3750  Gig 1/0/1
+
+        let mut mods_made = 0;
+
+        for line in input_data.lines() {
+            let line = line.trim();
+            if line.is_empty()
+                || line.starts_with("Device ID")
+                || line.starts_with("Capability Codes:")
+            {
+                continue;
+            }
+
+            // Parse each line to extract neighbor information
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 6 {
+                let device_id = parts[0];
+                let local_interface = parts[1..3].join(" "); // Handle "Gig 1/0/1" format
+
+                // Find the interface and store the neighbor data
+                // Try both short and long interface names
+                let interface_candidates = vec![
+                    local_interface.clone(),
+                    local_interface.replace("Gig ", "GigabitEthernet"),
+                    local_interface.replace("Fa ", "FastEthernet"),
+                    local_interface.replace("Te ", "TenGigabitEthernet"),
+                    local_interface.replace("Ten ", "TenGigabitEthernet"),
+                    // Also try without the space for cases where the format is different
+                    local_interface.replace("Gig", "GigabitEthernet"),
+                    local_interface.replace("Fa", "FastEthernet"),
+                    local_interface.replace("Te", "TenGigabitEthernet"),
+                    local_interface.replace("Ten", "TenGigabitEthernet"),
+                ];
+
+                let mut found_interface = false;
+                for candidate in interface_candidates {
+                    if let Some(existing_interface) = self
+                        .interfaces
+                        .iter_mut()
+                        .find(|iface| iface.name == candidate || iface.name.contains(&candidate))
+                    {
+                        // Store the raw neighbor data
+                        let neighbor_key = format!("{}@{}", device_id, candidate);
+                        if existing_interface.neighbour_string_data.get(&neighbor_key)
+                            != Some(&line.to_string())
+                        {
+                            existing_interface
+                                .neighbour_string_data
+                                .insert(neighbor_key, line.to_string());
+                            mods_made += 1;
+                        }
+                        found_interface = true;
+                        break;
+                    }
+                }
+
+                if !found_interface {
+                    debug!(
+                        "Interface {} not found for neighbor data: {line}",
+                        local_interface
+                    );
+                }
+            }
+        }
+
+        Ok(mods_made)
     }
 }
 

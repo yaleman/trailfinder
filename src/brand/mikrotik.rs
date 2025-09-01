@@ -115,6 +115,16 @@ impl DeviceHandler for Mikrotik {
                 .captures(&current_line)
                 .and_then(|caps| caps.name("comment").map(|m| m.as_str().to_string()));
 
+            // Parse MAC address from mac-address= field
+            let mac_address = find_kv(&parts, "mac-address").and_then(|mac_str| {
+                use std::str::FromStr;
+                mac_address::MacAddress::from_str(&mac_str)
+                    .inspect_err(|e| {
+                        debug!("Failed to parse MAC address '{}': {}", mac_str, e);
+                    })
+                    .ok()
+            });
+
             let interface = Interface {
                 interface_id: Uuid::new_v4(),
                 name,
@@ -122,6 +132,7 @@ impl DeviceHandler for Mikrotik {
                 addresses: Vec::new(),
                 interface_type,
                 comment,
+                mac_address,
                 neighbour_string_data: Default::default(),
                 peers: Default::default(),
             };
@@ -320,7 +331,7 @@ impl DeviceHandler for Mikrotik {
                     if let Some(peer) = devices.iter().find(|p| p.hostname == peer_identity) {
                         existing_interface
                             .peers
-                            .entry(0)
+                            .entry(crate::PeerConnection::Untagged)
                             .or_default()
                             .push(peer.device_id);
                         mods_made += 1;
@@ -369,6 +380,10 @@ impl DeviceHandler for Mikrotik {
             let routes_command = self.get_routes_command();
             let routes_output = ssh_client.execute_command(&routes_command).await?;
 
+            // Get CDP/neighbor data
+            let cdp_command = self.get_cdp_command();
+            let cdp_output = ssh_client.execute_command(&cdp_command).await?;
+
             // Parse the data using the existing ConfParser implementation
             let mut parser = Mikrotik::new(
                 device_config.hostname.clone(),
@@ -380,6 +395,9 @@ impl DeviceHandler for Mikrotik {
             parser.parse_interfaces(&interfaces_output)?;
             parser.parse_routes(&routes_output)?;
 
+            // Store raw CDP data in interfaces for later global processing
+            parser.store_raw_cdp_data(&cdp_output)?;
+
             let device = parser.build();
 
             // Combine both outputs for config hash
@@ -390,6 +408,60 @@ impl DeviceHandler for Mikrotik {
             );
             Ok(DeviceState::new(device, &combined_config))
         }
+    }
+}
+
+impl Mikrotik {
+    /// Store raw CDP/neighbor data in interfaces for later global processing
+    pub fn store_raw_cdp_data(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
+        debug!("Storing raw CDP data: {input_data}");
+
+        // Parse MikroTik neighbor discovery output
+        // Actual format from /ip neighbor/print:
+        // Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY
+        // #  INTERFACE     ADDRESS    MAC-ADDRESS        IDENTITY
+        // 0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.housenet.yaleman.org
+
+        let mut mods_made = 0;
+
+        for line in input_data.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("Columns:") {
+                continue;
+            }
+
+            // Parse each line to extract neighbor information
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 5 {
+                // Index, Interface, Address, MAC-Address, Identity
+                let interface_name = parts[1];
+                let dst_address = parts[2];
+                let _mac_address = parts[3];
+                let identity = parts[4];
+
+                // Find the interface and store the neighbor data
+                if let Some(existing_interface) = self
+                    .interfaces
+                    .iter_mut()
+                    .find(|iface| iface.name == interface_name)
+                {
+                    // Store the raw neighbor data with identity as the key
+                    let neighbor_key = format!("{}@{}", identity, dst_address);
+                    if existing_interface.neighbour_string_data.get(&neighbor_key)
+                        != Some(&line.to_string())
+                    {
+                        existing_interface
+                            .neighbour_string_data
+                            .insert(neighbor_key, line.to_string());
+                        mods_made += 1;
+                    }
+                } else {
+                    debug!("Interface {interface_name} not found for neighbor data: {line}");
+                }
+            }
+        }
+
+        Ok(mods_made)
     }
 }
 
@@ -597,10 +669,10 @@ fn test_mikrotik_route_types() {
 }
 
 #[test]
-fn test_mikrotik_cdp() {
-    use crate::brand::cisco::Cisco;
+fn test_mikrotik_store_raw_cdp_data() {
+    crate::setup_test_logging();
 
-    let test_data = r#"Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY
+    let test_cdp_data = r#"Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY
 #  INTERFACE     ADDRESS    MAC-ADDRESS        IDENTITY
 0  sfp-sfpplus1  10.0.99.2  A0:23:9F:FF:FF:33  test-cisco.example.com
    bridge"#;
@@ -612,7 +684,42 @@ fn test_mikrotik_cdp() {
         DeviceType::Router,
     );
 
-    let test_cisco = Cisco::test_device().build();
-    let result = device.parse_neighbours(test_data, vec![test_cisco]);
-    assert!(result.is_ok(), "CDP parsing should succeed");
+    // First, create an interface that the CDP data references
+    let test_interface = Interface {
+        interface_id: Uuid::new_v4(),
+        name: "sfp-sfpplus1".to_string(),
+        vlans: Vec::new(),
+        addresses: Vec::new(),
+        interface_type: InterfaceType::Ethernet,
+        comment: None,
+        mac_address: None,
+        neighbour_string_data: std::collections::HashMap::new(),
+        peers: std::collections::HashMap::new(),
+    };
+
+    device.interfaces.push(test_interface);
+
+    // Test the store_raw_cdp_data method
+    let result = device.store_raw_cdp_data(test_cdp_data);
+    assert!(result.is_ok(), "CDP data storage should succeed");
+    assert_eq!(result.unwrap(), 1, "Should store one neighbor entry");
+
+    // Verify that the neighbor data was stored
+    let sfp_interface = device
+        .interfaces
+        .iter()
+        .find(|iface| iface.name == "sfp-sfpplus1")
+        .expect("Should find sfp-sfpplus1 interface");
+
+    assert!(
+        !sfp_interface.neighbour_string_data.is_empty(),
+        "Should have neighbor data stored"
+    );
+
+    // Check that the CDP data contains the expected identity
+    let has_cisco_neighbor = sfp_interface
+        .neighbour_string_data
+        .values()
+        .any(|data| data.contains("test-cisco.example.com"));
+    assert!(has_cisco_neighbor, "Should have Cisco neighbor data");
 }
