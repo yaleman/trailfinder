@@ -353,6 +353,12 @@ impl DeviceHandler for Cisco {
             let cdp_command = self.get_cdp_command();
             let cdp_output = ssh_client.execute_command(&cdp_command).await?;
 
+            // Get system hostname/identity
+            let hostname_output = ssh_client
+                .execute_command("show running-config | include hostname")
+                .await
+                .unwrap_or_default();
+
             // Parse the data using the existing ConfParser implementation
             let mut parser = Cisco::new(
                 device_config.hostname.clone(),
@@ -367,7 +373,12 @@ impl DeviceHandler for Cisco {
             // Store raw CDP data in interfaces for later global processing
             parser.store_raw_cdp_data(&cdp_output)?;
 
-            let device = parser.build();
+            let mut device = parser.build();
+
+            // Parse and set system identity
+            if let Some(identity) = parse_cisco_hostname(&hostname_output) {
+                device.system_identity = Some(identity);
+            }
 
             // Combine both outputs for config hash
             let combined_config = format!(
@@ -385,11 +396,34 @@ impl Cisco {
     pub fn store_raw_cdp_data(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
         debug!("Storing raw CDP data: {input_data}");
 
-        // Parse Cisco CDP neighbor output
-        // Example output format:
-        // Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID
-        // c3650.example.co Gig 1/0/1         144             R S   WS-C3750  Gig 1/0/1
+        // Parse Cisco CDP neighbor output - this can be multi-line format
+        // Two common formats:
+        // 1. Tabular format:
+        //    Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID
+        //    c3650.example.co Gig 1/0/1         144             R S   WS-C3750  Gig 1/0/1
+        //
+        // 2. Detailed format (show cdp neighbors detail):
+        //    Device ID: switch1.example.com
+        //    Entry address(es):
+        //      IP address: 192.168.1.10
+        //    Platform: cisco WS-C3750G-48TS,  Capabilities: Router Switch
+        //    Interface: GigabitEthernet1/0/1,  Port ID (outgoing port): GigabitEthernet1/0/2
 
+        let mut mods_made = 0;
+
+        // First try tabular format parsing
+        mods_made += self.parse_cisco_cdp_tabular(input_data)?;
+
+        // If no matches found, try detailed format parsing
+        if mods_made == 0 {
+            mods_made += self.parse_cisco_cdp_detailed(input_data)?;
+        }
+
+        Ok(mods_made)
+    }
+
+    /// Parse Cisco CDP tabular format output
+    fn parse_cisco_cdp_tabular(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
         let mut mods_made = 0;
 
         for line in input_data.lines() {
@@ -397,6 +431,7 @@ impl Cisco {
             if line.is_empty()
                 || line.starts_with("Device ID")
                 || line.starts_with("Capability Codes:")
+                || line.starts_with("---")
             {
                 continue;
             }
@@ -407,54 +442,139 @@ impl Cisco {
                 let device_id = parts[0];
                 let local_interface = parts[1..3].join(" "); // Handle "Gig 1/0/1" format
 
-                // Find the interface and store the neighbor data
-                // Try both short and long interface names
-                let interface_candidates = vec![
-                    local_interface.clone(),
-                    local_interface.replace("Gig ", "GigabitEthernet"),
-                    local_interface.replace("Fa ", "FastEthernet"),
-                    local_interface.replace("Te ", "TenGigabitEthernet"),
-                    local_interface.replace("Ten ", "TenGigabitEthernet"),
-                    // Also try without the space for cases where the format is different
-                    local_interface.replace("Gig", "GigabitEthernet"),
-                    local_interface.replace("Fa", "FastEthernet"),
-                    local_interface.replace("Te", "TenGigabitEthernet"),
-                    local_interface.replace("Ten", "TenGigabitEthernet"),
-                ];
-
-                let mut found_interface = false;
-                for candidate in interface_candidates {
-                    if let Some(existing_interface) = self
-                        .interfaces
-                        .iter_mut()
-                        .find(|iface| iface.name == candidate || iface.name.contains(&candidate))
-                    {
-                        // Store the raw neighbor data
-                        let neighbor_key = format!("{}@{}", device_id, candidate);
-                        if existing_interface.neighbour_string_data.get(&neighbor_key)
-                            != Some(&line.to_string())
-                        {
-                            existing_interface
-                                .neighbour_string_data
-                                .insert(neighbor_key, line.to_string());
-                            mods_made += 1;
-                        }
-                        found_interface = true;
-                        break;
-                    }
-                }
-
-                if !found_interface {
-                    debug!(
-                        "Interface {} not found for neighbor data: {line}",
-                        local_interface
-                    );
+                // Store the neighbor data for this interface
+                if let Some(mods) =
+                    self.store_neighbor_data_for_interface(device_id, &local_interface, line)?
+                {
+                    mods_made += mods;
                 }
             }
         }
 
         Ok(mods_made)
     }
+
+    /// Parse Cisco CDP detailed format output  
+    fn parse_cisco_cdp_detailed(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
+        let mut mods_made = 0;
+        let mut current_neighbor = String::new();
+        let mut device_id: Option<String> = None;
+        let mut local_interface: Option<String> = None;
+
+        for line in input_data.lines() {
+            let line = line.trim();
+
+            // Start of a new neighbor entry
+            if line.starts_with("Device ID:") {
+                // Process previous neighbor if we have one
+                if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface) {
+                    if let Some(mods) = self.store_neighbor_data_for_interface(
+                        dev_id,
+                        local_int,
+                        &current_neighbor,
+                    )? {
+                        mods_made += mods;
+                    }
+                }
+
+                // Start new neighbor
+                device_id = line
+                    .strip_prefix("Device ID:")
+                    .map(|s| s.trim().to_string());
+                local_interface = None;
+                current_neighbor.clear();
+                current_neighbor.push_str(line);
+                current_neighbor.push('\n');
+                continue;
+            }
+
+            // Look for interface information
+            if line.contains("Interface:") && line.contains("Port ID") {
+                // Extract local interface name
+                if let Some(interface_part) = line.split("Interface:").nth(1) {
+                    if let Some(interface_name) = interface_part.split(',').next() {
+                        local_interface = Some(interface_name.trim().to_string());
+                    }
+                }
+            }
+
+            // Add all lines to current neighbor data
+            if !line.is_empty() {
+                current_neighbor.push_str(line);
+                current_neighbor.push('\n');
+            }
+        }
+
+        // Process the last neighbor
+        if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface) {
+            if let Some(mods) =
+                self.store_neighbor_data_for_interface(dev_id, local_int, &current_neighbor)?
+            {
+                mods_made += mods;
+            }
+        }
+
+        Ok(mods_made)
+    }
+
+    /// Store neighbor data for a specific interface with name matching
+    fn store_neighbor_data_for_interface(
+        &mut self,
+        device_id: &str,
+        local_interface: &str,
+        neighbor_data: &str,
+    ) -> Result<Option<usize>, TrailFinderError> {
+        // Try both short and long interface names
+        let interface_candidates = vec![
+            local_interface.to_string(),
+            local_interface.replace("Gig ", "GigabitEthernet"),
+            local_interface.replace("Fa ", "FastEthernet"),
+            local_interface.replace("Te ", "TenGigabitEthernet"),
+            local_interface.replace("Ten ", "TenGigabitEthernet"),
+            local_interface.replace("Gig", "GigabitEthernet"),
+            local_interface.replace("Fa", "FastEthernet"),
+            local_interface.replace("Te", "TenGigabitEthernet"),
+            local_interface.replace("Ten", "TenGigabitEthernet"),
+        ];
+
+        for candidate in interface_candidates {
+            if let Some(existing_interface) = self
+                .interfaces
+                .iter_mut()
+                .find(|iface| iface.name == candidate || iface.name.contains(&candidate))
+            {
+                // Store the raw neighbor data
+                let neighbor_key = format!("{}@{}", device_id, candidate);
+                if existing_interface.neighbour_string_data.get(&neighbor_key)
+                    != Some(&neighbor_data.to_string())
+                {
+                    existing_interface
+                        .neighbour_string_data
+                        .insert(neighbor_key, neighbor_data.to_string());
+                    return Ok(Some(1));
+                }
+                return Ok(Some(0)); // Found interface but no update needed
+            }
+        }
+
+        debug!(
+            "Interface {} not found for neighbor data from device {}",
+            local_interface, device_id
+        );
+        Ok(None)
+    }
+}
+
+/// Parse Cisco hostname from running config output
+/// Example output: "hostname MySwitch"
+fn parse_cisco_hostname(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let line = line.trim();
+        if line.starts_with("hostname ") {
+            return Some(line.strip_prefix("hostname ")?.trim().to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -682,8 +802,7 @@ GigabitEthernet1/1/1 is down, line protocol is down (notconnect)
 GigabitEthernet1/1/2 is down, line protocol is down (notconnect)
 TenGigabitEthernet1/1/3 is up, line protocol is up (connected)
 TenGigabitEthernet1/1/4 is down, line protocol is down (notconnect)
-Port-channel2 is up, line protocol is up (connected)
-Connection to c3650.housenet.yaleman.org closed by remote host."#;
+Port-channel2 is up, line protocol is up (connected)"#;
 
         let mut device = Cisco::new(
             "test.example.com".to_string(),
@@ -707,5 +826,36 @@ Connection to c3650.housenet.yaleman.org closed by remote host."#;
                 panic!("Too many attempts to parse neighbours");
             }
         }
+    }
+
+    #[test]
+    fn test_parse_cisco_hostname() {
+        let hostname_output = "hostname MyTestSwitch";
+        let result = parse_cisco_hostname(hostname_output);
+        assert!(result.is_some(), "Should parse hostname successfully");
+        assert_eq!(
+            result.unwrap(),
+            "MyTestSwitch",
+            "Should extract correct hostname"
+        );
+
+        // Test with no hostname
+        let empty_output = "";
+        let result = parse_cisco_hostname(empty_output);
+        assert!(result.is_none(), "Should return None for empty output");
+
+        // Test with different format
+        let config_output = r#"Building configuration...
+
+hostname TestDevice
+
+!"#;
+        let result = parse_cisco_hostname(config_output);
+        assert!(result.is_some(), "Should parse hostname from config");
+        assert_eq!(
+            result.unwrap(),
+            "TestDevice",
+            "Should extract hostname from config"
+        );
     }
 }

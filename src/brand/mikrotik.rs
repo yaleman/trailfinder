@@ -384,6 +384,12 @@ impl DeviceHandler for Mikrotik {
             let cdp_command = self.get_cdp_command();
             let cdp_output = ssh_client.execute_command(&cdp_command).await?;
 
+            // Get system identity
+            let identity_output = ssh_client
+                .execute_command("/system identity print")
+                .await
+                .unwrap_or_default();
+
             // Parse the data using the existing ConfParser implementation
             let mut parser = Mikrotik::new(
                 device_config.hostname.clone(),
@@ -398,7 +404,12 @@ impl DeviceHandler for Mikrotik {
             // Store raw CDP data in interfaces for later global processing
             parser.store_raw_cdp_data(&cdp_output)?;
 
-            let device = parser.build();
+            let mut device = parser.build();
+
+            // Parse and set system identity
+            if let Some(identity) = parse_mikrotik_identity(&identity_output) {
+                device.system_identity = Some(identity);
+            }
 
             // Combine both outputs for config hash
             let combined_config = format!(
@@ -420,7 +431,7 @@ impl Mikrotik {
         // Actual format from /ip neighbor/print:
         // Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY
         // #  INTERFACE     ADDRESS    MAC-ADDRESS        IDENTITY
-        // 0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.housenet.yaleman.org
+        // 0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.example.com
 
         let mut mods_made = 0;
 
@@ -463,6 +474,18 @@ impl Mikrotik {
 
         Ok(mods_made)
     }
+}
+
+/// Parse MikroTik system identity output
+/// Example output: "name: MyMikroTik"
+fn parse_mikrotik_identity(output: &str) -> Option<String> {
+    for line in output.lines() {
+        let line = line.trim();
+        if line.starts_with("name:") {
+            return Some(line.strip_prefix("name:")?.trim().to_string());
+        }
+    }
+    None
 }
 
 #[test]
@@ -722,4 +745,28 @@ fn test_mikrotik_store_raw_cdp_data() {
         .values()
         .any(|data| data.contains("test-cisco.example.com"));
     assert!(has_cisco_neighbor, "Should have Cisco neighbor data");
+}
+
+#[test]
+fn test_parse_mikrotik_identity() {
+    crate::setup_test_logging();
+
+    // Test normal identity output
+    let identity_output = "name: MyMikroTik\n";
+    let result = parse_mikrotik_identity(identity_output);
+    assert_eq!(result, Some("MyMikroTik".to_string()));
+
+    // Test with extra whitespace
+    let identity_output = "   name:   EdgeRouter-X   \n";
+    let result = parse_mikrotik_identity(identity_output);
+    assert_eq!(result, Some("EdgeRouter-X".to_string()));
+
+    // Test empty output
+    let result = parse_mikrotik_identity("");
+    assert_eq!(result, None);
+
+    // Test output without name field
+    let identity_output = "some other line\nanother line\n";
+    let result = parse_mikrotik_identity(identity_output);
+    assert_eq!(result, None);
 }

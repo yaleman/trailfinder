@@ -52,6 +52,9 @@ pub struct Device {
     pub device_id: uuid::Uuid,
     pub hostname: String,
     pub name: Option<String>,
+    /// Device identity as reported by the device itself (e.g., from CDP, LLDP, or system identity)
+    /// This may differ from hostname and is used for neighbor discovery
+    pub system_identity: Option<String>,
     pub owner: Owner,
     pub device_type: DeviceType,
     pub routes: Vec<Route>,
@@ -556,7 +559,7 @@ pub mod neighbor_resolution {
                 return Some(line.strip_prefix("Device ID:")?.trim().to_string());
             }
 
-            // Handle MikroTik neighbor format: "0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.housenet.yaleman.org"
+            // Handle MikroTik neighbor format: "0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.example.com"
             if !line.is_empty() && !line.starts_with('#') && !line.starts_with("Columns:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 5 && parts[0].chars().all(|c| c.is_numeric()) {
@@ -613,19 +616,28 @@ pub mod neighbor_resolution {
         None
     }
 
-    /// Find device by hostname with fuzzy matching
-    fn find_device_by_hostname_fuzzy(
+    /// Find device by hostname with fuzzy matching, including system identity
+    pub fn find_device_by_hostname_fuzzy(
         hostname: &str,
         device_states: &[DeviceState],
     ) -> Option<usize> {
-        // First try exact match (case-insensitive)
+        // First try exact match against hostname (case-insensitive)
         for (index, device_state) in device_states.iter().enumerate() {
             if device_state.device.hostname.eq_ignore_ascii_case(hostname) {
                 return Some(index);
             }
         }
 
-        // Try without domain (case-insensitive)
+        // Try exact match against system identity (case-insensitive)
+        for (index, device_state) in device_states.iter().enumerate() {
+            if let Some(ref system_identity) = device_state.device.system_identity {
+                if system_identity.eq_ignore_ascii_case(hostname) {
+                    return Some(index);
+                }
+            }
+        }
+
+        // Try without domain against hostname (case-insensitive)
         let hostname_short = hostname.split('.').next().unwrap_or(hostname);
         for (index, device_state) in device_states.iter().enumerate() {
             let device_hostname_short = device_state
@@ -636,6 +648,16 @@ pub mod neighbor_resolution {
                 .unwrap_or(&device_state.device.hostname);
             if device_hostname_short.eq_ignore_ascii_case(hostname_short) {
                 return Some(index);
+            }
+        }
+
+        // Try without domain against system identity (case-insensitive)
+        for (index, device_state) in device_states.iter().enumerate() {
+            if let Some(ref system_identity) = device_state.device.system_identity {
+                let identity_short = system_identity.split('.').next().unwrap_or(system_identity);
+                if identity_short.eq_ignore_ascii_case(hostname_short) {
+                    return Some(index);
+                }
             }
         }
 
@@ -719,6 +741,7 @@ impl Device {
             device_id: uuid::Uuid::new_v4(),
             hostname,
             name,
+            system_identity: None,
             owner,
             device_type,
             routes: Vec::new(),
@@ -759,4 +782,74 @@ pub(crate) fn setup_test_logging() {
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_identity_tracking() {
+        let mut device = Device::new(
+            "router.example.com".to_string(),
+            Some("Test Router".to_string()),
+            Owner::Named("Lab".to_string()),
+            DeviceType::Router,
+        );
+
+        // Initially no system identity
+        assert!(device.system_identity.is_none());
+
+        // Set system identity
+        device.system_identity = Some("MyRouter".to_string());
+        assert_eq!(device.system_identity, Some("MyRouter".to_string()));
+    }
+
+    #[test]
+    fn test_find_device_by_hostname_fuzzy_with_identity() {
+        use crate::config::DeviceState;
+
+        let device1 = Device::new(
+            "router1.example.com".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+        let mut device_state1 = DeviceState::new(device1, "test config");
+        device_state1.device.system_identity = Some("CoreRouter".to_string());
+
+        let device2 = Device::new(
+            "switch1.example.com".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Switch,
+        );
+        let device_state2 = DeviceState::new(device2, "test config 2");
+
+        let device_states = vec![device_state1, device_state2];
+
+        // Test finding by hostname
+        let result = neighbor_resolution::find_device_by_hostname_fuzzy("router1", &device_states);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 0);
+
+        // Test finding by system identity
+        let result =
+            neighbor_resolution::find_device_by_hostname_fuzzy("CoreRouter", &device_states);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 0);
+
+        // Test finding with domain stripping
+        let result = neighbor_resolution::find_device_by_hostname_fuzzy(
+            "router1.example.com",
+            &device_states,
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), 0);
+
+        // Test no match
+        let result =
+            neighbor_resolution::find_device_by_hostname_fuzzy("nonexistent", &device_states);
+        assert!(result.is_none());
+    }
 }
