@@ -452,19 +452,18 @@ pub mod neighbor_resolution {
                         // Look through the peer device's interfaces to find one that has neighbor data referencing us
                         let mut found_interface_id = None;
                         for interface in &peer_device.interfaces {
-                            for (_neighbor_key, neighbor_data) in &interface.neighbour_string_data {
+                            for neighbor_data in interface.neighbour_string_data.values() {
                                 // Check if this neighbor data references our hostname
                                 if let Some(peer_hostname) =
                                     extract_hostname_from_cdp(neighbor_data)
+                                    && peer_hostname == *current_device_hostname
                                 {
-                                    if peer_hostname == *current_device_hostname {
-                                        debug!(
-                                            "Found bilateral relationship: peer interface '{}' reports neighbor '{}'",
-                                            interface.name, peer_hostname
-                                        );
-                                        found_interface_id = Some(interface.interface_id);
-                                        break;
-                                    }
+                                    debug!(
+                                        "Found bilateral relationship: peer interface '{}' reports neighbor '{}'",
+                                        interface.name, peer_hostname
+                                    );
+                                    found_interface_id = Some(interface.interface_id);
+                                    break;
                                 }
                             }
                             if found_interface_id.is_some() {
@@ -747,22 +746,22 @@ pub mod neighbor_resolution {
         interface_b_id: Uuid,
         connection_type: &PeerConnection,
     ) -> Result<(), TrailFinderError> {
-        // Add device B as peer to device A's interface
+        // Add device B's interface as peer to device A's interface
         if let Some(interface_a) = device_a.device.get_interface_mut(interface_a_id) {
             interface_a
                 .peers
                 .entry(connection_type.clone())
                 .or_default()
-                .push(device_b.device.device_id);
+                .push(interface_b_id);
         }
 
-        // Add device A as peer to device B's interface
+        // Add device A's interface as peer to device B's interface
         if let Some(interface_b) = device_b.device.get_interface_mut(interface_b_id) {
             interface_b
                 .peers
                 .entry(connection_type.clone())
                 .or_default()
-                .push(device_a.device.device_id);
+                .push(interface_a_id);
         }
 
         Ok(())

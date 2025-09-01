@@ -604,3 +604,71 @@ fn test_topology_with_vlan_cdp_relationships() {
         .collect();
     assert_eq!(vlan_cdp_connections.len(), 2);
 }
+
+#[tokio::test]
+async fn test_live_topology_has_cdp_connections() {
+    // Integration test to verify our actual live topology shows CDP connections
+    // This test uses the actual device configuration and state files
+
+    use std::sync::Arc;
+    use trailfinder::config::AppConfig;
+
+    // Load the actual configuration
+    let config = AppConfig::load_from_file("devices.json")
+        .expect("Failed to load devices.json - make sure you run this test from the project root");
+
+    let app_state = trailfinder::web::AppState {
+        config: Arc::new(config),
+    };
+
+    // Get the topology using our web API function
+    let result = trailfinder::web::get_network_topology(axum::extract::State(app_state)).await;
+    assert!(result.is_ok(), "Should successfully get network topology");
+
+    let topology = result.unwrap().0;
+
+    // Verify we have the expected devices
+    assert!(
+        !topology.devices.is_empty(),
+        "Should have devices in topology"
+    );
+
+    // Look for CDP connections between our test devices
+    let cdp_connections: Vec<_> = topology
+        .connections
+        .iter()
+        .filter(|c| matches!(c.connection_type, trailfinder::web::ConnectionType::CDP))
+        .collect();
+
+    // We should have at least some CDP connections if neighbor discovery worked
+    assert!(
+        !cdp_connections.is_empty(),
+        "Should have CDP connections in topology"
+    );
+
+    // Print the connections for debugging
+    println!("Found {} CDP connections:", cdp_connections.len());
+    for conn in &cdp_connections {
+        println!(
+            "  {} -> {}: {} -> {}",
+            conn.from,
+            conn.to,
+            conn.interface_from,
+            conn.interface_to.as_deref().unwrap_or("unknown")
+        );
+    }
+
+    // Look specifically for connections involving our test devices
+    let has_mikrotik_cisco_connection = cdp_connections.iter().any(|conn| {
+        (conn.interface_from.contains("sfp-sfpplus1") || conn.interface_from.contains("bridge"))
+            && conn
+                .interface_to
+                .as_ref()
+                .is_some_and(|iface| iface.contains("TenGigabitEthernet"))
+    });
+
+    assert!(
+        has_mikrotik_cisco_connection,
+        "Should have CDP connection between MikroTik (sfp-sfpplus1/bridge) and Cisco (TenGigabitEthernet) devices"
+    );
+}

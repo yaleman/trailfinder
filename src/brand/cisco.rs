@@ -446,7 +446,7 @@ impl Cisco {
         let mut mods_made = 0;
         let lines: Vec<&str> = input_data.lines().collect();
         let mut i = 0;
-        
+
         while i < lines.len() {
             let line = lines[i].trim();
             if line.is_empty()
@@ -457,7 +457,7 @@ impl Cisco {
                 i += 1;
                 continue;
             }
-            
+
             // Parse each line to extract neighbor information
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 6 {
@@ -470,26 +470,31 @@ impl Cisco {
                 {
                     mods_made += mods;
                 }
-            } else if parts.len() >= 1 && !parts[0].is_empty() && i + 1 < lines.len() {
+            } else if !parts.is_empty() && !parts[0].is_empty() && i + 1 < lines.len() {
                 // Multi-line format: device_id is on one line, interface info is on the next line
                 let device_id = parts[0];
                 let next_line = lines[i + 1].trim();
                 let next_parts: Vec<&str> = next_line.split_whitespace().collect();
-                
+
                 // Check if next line starts with whitespace (indicates continuation) and has interface info
                 if lines[i + 1].starts_with(' ') && next_parts.len() >= 2 {
                     let local_interface = next_parts[0..2].join(" "); // Handle "Ten 1/1/3" format
                     let combined_data = format!("{}\n{}", line, next_line);
-                    
-                    debug!("Found multi-line CDP entry: device_id='{}', interface='{}'", device_id, local_interface);
-                    
+
+                    debug!(
+                        "Found multi-line CDP entry: device_id='{}', interface='{}'",
+                        device_id, local_interface
+                    );
+
                     // Store the neighbor data for this interface
-                    if let Some(mods) =
-                        self.store_neighbor_data_for_interface(device_id, &local_interface, &combined_data)?
-                    {
+                    if let Some(mods) = self.store_neighbor_data_for_interface(
+                        device_id,
+                        &local_interface,
+                        &combined_data,
+                    )? {
                         mods_made += mods;
                     }
-                    
+
                     // Skip the next line since we processed it
                     i += 1;
                 }
