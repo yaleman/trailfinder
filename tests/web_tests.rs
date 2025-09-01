@@ -607,15 +607,16 @@ fn test_topology_with_vlan_cdp_relationships() {
 
 #[tokio::test]
 async fn test_live_topology_has_cdp_connections() {
-    // Integration test to verify our actual live topology shows CDP connections
-    // This test uses the actual device configuration and state files
+    // Integration test to verify our topology shows CDP connections
+    // This test uses test device configuration and state files
 
     use std::sync::Arc;
     use trailfinder::config::AppConfig;
 
-    // Load the actual configuration
-    let config = AppConfig::load_from_file("devices.json")
-        .expect("Failed to load devices.json - make sure you run this test from the project root");
+    // Load the test configuration
+    let config = AppConfig::load_from_file("devices.test.json").expect(
+        "Failed to load devices.test.json - make sure you run this test from the project root",
+    );
 
     let app_state = trailfinder::web::AppState {
         config: Arc::new(config),
@@ -660,7 +661,9 @@ async fn test_live_topology_has_cdp_connections() {
 
     // Look specifically for connections involving our test devices
     let has_mikrotik_cisco_connection = cdp_connections.iter().any(|conn| {
-        (conn.interface_from.contains("sfp-sfpplus1") || conn.interface_from.contains("bridge"))
+        (conn.interface_from.contains("sfp-sfpplus1")
+            || conn.interface_from.contains("bridge")
+            || conn.interface_from.contains("ether1"))
             && conn
                 .interface_to
                 .as_ref()
@@ -669,6 +672,7 @@ async fn test_live_topology_has_cdp_connections() {
 
     assert!(
         has_mikrotik_cisco_connection,
-        "Should have CDP connection between MikroTik (sfp-sfpplus1/bridge) and Cisco (TenGigabitEthernet) devices"
+        "Should have CDP connection between MikroTik (sfp-sfpplus1/bridge/ether1) and Cisco (TenGigabitEthernet) devices. Found connections: {:#?}",
+        cdp_connections
     );
 }

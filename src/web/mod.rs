@@ -58,14 +58,14 @@ pub struct DeviceSummary {
     pub last_seen: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NetworkTopology {
     pub devices: Vec<NetworkDevice>,
     pub connections: Vec<NetworkConnection>,
     pub networks: Vec<NetworkSegment>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NetworkDevice {
     pub device_id: String,
     pub hostname: String,
@@ -73,13 +73,13 @@ pub struct NetworkDevice {
     pub position: Option<Position>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NetworkConnection {
     pub from: String,
     pub to: String,
@@ -97,7 +97,7 @@ pub enum ConnectionType {
     CDP,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NetworkSegment {
     pub network: String,
     pub vlan_id: Option<u16>,

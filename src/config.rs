@@ -252,6 +252,13 @@ impl AppConfig {
         std::path::Path::new(self.get_state_directory()).join(format!("{}.json", hostname))
     }
 
+    /// Create a clone of this config with a different state directory for testing
+    pub fn with_state_directory(&self, state_dir: String) -> Self {
+        let mut config = self.clone();
+        config.state_directory = Some(state_dir);
+        config
+    }
+
     pub fn load_device_state(
         &self,
         hostname: &str,

@@ -8,7 +8,7 @@ use trailfinder::{config::AppConfig, web::web_server_command};
 #[tokio::test]
 async fn test_end_to_end_functionality() {
     // Start test server using the shared web_server_command
-    let app_config = AppConfig::load_from_file("devices.json").unwrap_or_else(|_| {
+    let app_config = AppConfig::load_from_file("devices.example.json").unwrap_or_else(|_| {
         eprintln!("Warning: Could not load devices.json for test");
         AppConfig::default()
     });

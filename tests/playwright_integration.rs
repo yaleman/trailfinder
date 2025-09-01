@@ -17,8 +17,8 @@ mod playwright_tests {
     async fn start_test_server() -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>>
     {
         // Load the same config that the CLI would use
-        let app_config = AppConfig::load_from_file("devices.json").unwrap_or_else(|_| {
-            eprintln!("Warning: Could not load devices.json, using empty config for tests");
+        let app_config = AppConfig::load_from_file("devices.example.json").unwrap_or_else(|_| {
+            eprintln!("Warning: Could not load devices.example.json, using empty config for tests");
             AppConfig::default()
         });
 
