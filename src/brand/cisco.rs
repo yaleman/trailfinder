@@ -15,6 +15,7 @@ pub struct Cisco {
     device_type: DeviceType,
     routes: Vec<Route>,
     interfaces: Vec<Interface>,
+    system_identity: Option<String>,
 }
 
 impl Cisco {
@@ -27,6 +28,7 @@ impl Cisco {
             device_type: DeviceType::Switch,
             routes: Vec::new(),
             interfaces: Vec::new(),
+            system_identity: None,
         }
     }
 }
@@ -40,6 +42,7 @@ impl DeviceHandler for Cisco {
             device_type,
             routes: Vec::new(),
             interfaces: Vec::new(),
+            system_identity: None,
         }
     }
 
@@ -314,11 +317,30 @@ impl DeviceHandler for Cisco {
     }
 
     fn build(self) -> Device {
-        let mut device = Device::new(self.hostname, self.name, self.owner, self.device_type);
-        device.routes = self.routes;
-        device.interfaces = self.interfaces;
+        Device::new(self.hostname, self.name, self.owner, self.device_type)
+            .with_routes(self.routes)
+            .with_interfaces(self.interfaces)
+            .with_system_identity(self.system_identity)
+    }
 
-        device
+    fn parse_identity(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
+        for line in input_data.lines() {
+            let line = line.trim();
+            if line.starts_with("hostname ") {
+                self.system_identity = Some(
+                    line.strip_prefix("hostname ")
+                        .ok_or_else(|| {
+                            TrailFinderError::InvalidLine(format!(
+                                "Invalid hostname line: {}",
+                                line
+                            ))
+                        })?
+                        .trim()
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
     }
 
     fn get_cdp_command(&self) -> String {
@@ -373,12 +395,9 @@ impl DeviceHandler for Cisco {
             // Store raw CDP data in interfaces for later global processing
             parser.store_raw_cdp_data(&cdp_output)?;
 
-            let mut device = parser.build();
+            parser.parse_identity(&hostname_output)?;
 
-            // Parse and set system identity
-            if let Some(identity) = parse_cisco_hostname(&hostname_output) {
-                device.system_identity = Some(identity);
-            }
+            let device = parser.build();
 
             // Combine both outputs for config hash
             let combined_config = format!(
@@ -425,36 +444,63 @@ impl Cisco {
     /// Parse Cisco CDP tabular format output
     fn parse_cisco_cdp_tabular(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
         let mut mods_made = 0;
-
-        for line in input_data.lines() {
-            let line = line.trim();
+        let lines: Vec<&str> = input_data.lines().collect();
+        let mut i = 0;
+        
+        while i < lines.len() {
+            let line = lines[i].trim();
             if line.is_empty()
                 || line.starts_with("Device ID")
                 || line.starts_with("Capability Codes:")
                 || line.starts_with("---")
             {
+                i += 1;
                 continue;
             }
-
+            
             // Parse each line to extract neighbor information
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 6 {
+                // Single line format: device_id interface holdtime capability platform port_id
                 let device_id = parts[0];
                 let local_interface = parts[1..3].join(" "); // Handle "Gig 1/0/1" format
-
                 // Store the neighbor data for this interface
                 if let Some(mods) =
                     self.store_neighbor_data_for_interface(device_id, &local_interface, line)?
                 {
                     mods_made += mods;
                 }
+            } else if parts.len() >= 1 && !parts[0].is_empty() && i + 1 < lines.len() {
+                // Multi-line format: device_id is on one line, interface info is on the next line
+                let device_id = parts[0];
+                let next_line = lines[i + 1].trim();
+                let next_parts: Vec<&str> = next_line.split_whitespace().collect();
+                
+                // Check if next line starts with whitespace (indicates continuation) and has interface info
+                if lines[i + 1].starts_with(' ') && next_parts.len() >= 2 {
+                    let local_interface = next_parts[0..2].join(" "); // Handle "Ten 1/1/3" format
+                    let combined_data = format!("{}\n{}", line, next_line);
+                    
+                    debug!("Found multi-line CDP entry: device_id='{}', interface='{}'", device_id, local_interface);
+                    
+                    // Store the neighbor data for this interface
+                    if let Some(mods) =
+                        self.store_neighbor_data_for_interface(device_id, &local_interface, &combined_data)?
+                    {
+                        mods_made += mods;
+                    }
+                    
+                    // Skip the next line since we processed it
+                    i += 1;
+                }
             }
+            i += 1;
         }
 
         Ok(mods_made)
     }
 
-    /// Parse Cisco CDP detailed format output  
+    /// Parse Cisco CDP detailed format output
     fn parse_cisco_cdp_detailed(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
         let mut mods_made = 0;
         let mut current_neighbor = String::new();
@@ -467,14 +513,14 @@ impl Cisco {
             // Start of a new neighbor entry
             if line.starts_with("Device ID:") {
                 // Process previous neighbor if we have one
-                if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface) {
-                    if let Some(mods) = self.store_neighbor_data_for_interface(
+                if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface)
+                    && let Some(mods) = self.store_neighbor_data_for_interface(
                         dev_id,
                         local_int,
                         &current_neighbor,
-                    )? {
-                        mods_made += mods;
-                    }
+                    )?
+                {
+                    mods_made += mods;
                 }
 
                 // Start new neighbor
@@ -491,10 +537,10 @@ impl Cisco {
             // Look for interface information
             if line.contains("Interface:") && line.contains("Port ID") {
                 // Extract local interface name
-                if let Some(interface_part) = line.split("Interface:").nth(1) {
-                    if let Some(interface_name) = interface_part.split(',').next() {
-                        local_interface = Some(interface_name.trim().to_string());
-                    }
+                if let Some(interface_part) = line.split("Interface:").nth(1)
+                    && let Some(interface_name) = interface_part.split(',').next()
+                {
+                    local_interface = Some(interface_name.trim().to_string());
                 }
             }
 
@@ -506,12 +552,11 @@ impl Cisco {
         }
 
         // Process the last neighbor
-        if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface) {
-            if let Some(mods) =
+        if let (Some(dev_id), Some(local_int)) = (&device_id, &local_interface)
+            && let Some(mods) =
                 self.store_neighbor_data_for_interface(dev_id, local_int, &current_neighbor)?
-            {
-                mods_made += mods;
-            }
+        {
+            mods_made += mods;
         }
 
         Ok(mods_made)
@@ -563,18 +608,6 @@ impl Cisco {
         );
         Ok(None)
     }
-}
-
-/// Parse Cisco hostname from running config output
-/// Example output: "hostname MySwitch"
-fn parse_cisco_hostname(output: &str) -> Option<String> {
-    for line in output.lines() {
-        let line = line.trim();
-        if line.starts_with("hostname ") {
-            return Some(line.strip_prefix("hostname ")?.trim().to_string());
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -830,30 +863,35 @@ Port-channel2 is up, line protocol is up (connected)"#;
 
     #[test]
     fn test_parse_cisco_hostname() {
+        let mut test_device = Cisco::test_device();
+
         let hostname_output = "hostname MyTestSwitch";
-        let result = parse_cisco_hostname(hostname_output);
-        assert!(result.is_some(), "Should parse hostname successfully");
+        let result = test_device.parse_identity(hostname_output);
+        assert!(result.is_ok(), "Should parse hostname successfully");
         assert_eq!(
-            result.unwrap(),
+            test_device.system_identity.as_ref().unwrap(),
             "MyTestSwitch",
             "Should extract correct hostname"
         );
 
         // Test with no hostname
         let empty_output = "";
-        let result = parse_cisco_hostname(empty_output);
-        assert!(result.is_none(), "Should return None for empty output");
-
+        let result = test_device.parse_identity(empty_output);
+        assert!(result.is_ok(), "Should return None for empty output");
+        assert!(
+            test_device.system_identity.as_ref().unwrap() == "MyTestSwitch",
+            "Should remain unchanged"
+        );
         // Test with different format
         let config_output = r#"Building configuration...
 
 hostname TestDevice
 
 !"#;
-        let result = parse_cisco_hostname(config_output);
-        assert!(result.is_some(), "Should parse hostname from config");
+        let result = test_device.parse_identity(config_output);
+        assert!(result.is_ok(), "Should parse hostname from config");
         assert_eq!(
-            result.unwrap(),
+            test_device.system_identity.unwrap(),
             "TestDevice",
             "Should extract hostname from config"
         );

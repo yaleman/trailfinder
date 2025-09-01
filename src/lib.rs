@@ -342,10 +342,27 @@ impl NeighborInfo {
 impl Device {
     /// Find interface UUID by name
     pub fn find_interface_id_by_name(&self, name: &str) -> Option<Uuid> {
-        self.interfaces
-            .iter()
-            .find(|iface| iface.name == name)
-            .map(|iface| iface.interface_id)
+        // First try exact match
+        if let Some(interface) = self.interfaces.iter().find(|iface| iface.name == name) {
+            return Some(interface.interface_id);
+        }
+
+        // Handle cases where the remote interface name contains multiple interfaces separated by '/'
+        // This happens when Cisco CDP reports "bridge/sfp-sfpplus1" but MikroTik has separate "bridge" and "sfp-sfpplus1" interfaces
+        if name.contains('/') {
+            for part in name.split('/') {
+                if let Some(interface) = self.interfaces.iter().find(|iface| iface.name == part) {
+                    tracing::debug!(
+                        "Found interface '{}' by splitting remote interface name '{}'",
+                        part,
+                        name
+                    );
+                    return Some(interface.interface_id);
+                }
+            }
+        }
+
+        None
     }
 
     /// Validate that an interface UUID exists in this device
@@ -426,10 +443,40 @@ pub mod neighbor_resolution {
                     // Find peer interface by name
                     let peer_interface_id = if neighbor_info.remote_interface == "unknown" {
                         // For MikroTik neighbor data, we don't know the remote interface
-                        // Try to find it by looking for interfaces that might be connected
-                        // For now, just skip this relationship - it requires bilateral discovery
-                        debug!("Skipping peer relationship with unknown remote interface");
-                        None
+                        // Try bilateral discovery: find the peer device's neighbor data that references us
+                        debug!("Attempting bilateral discovery for unknown remote interface");
+
+                        let current_device_hostname = &device_states[device_index].device.hostname;
+                        let peer_device = &device_states[peer_device_index].device;
+
+                        // Look through the peer device's interfaces to find one that has neighbor data referencing us
+                        let mut found_interface_id = None;
+                        for interface in &peer_device.interfaces {
+                            for (_neighbor_key, neighbor_data) in &interface.neighbour_string_data {
+                                // Check if this neighbor data references our hostname
+                                if let Some(peer_hostname) =
+                                    extract_hostname_from_cdp(neighbor_data)
+                                {
+                                    if peer_hostname == *current_device_hostname {
+                                        debug!(
+                                            "Found bilateral relationship: peer interface '{}' reports neighbor '{}'",
+                                            interface.name, peer_hostname
+                                        );
+                                        found_interface_id = Some(interface.interface_id);
+                                        break;
+                                    }
+                                }
+                            }
+                            if found_interface_id.is_some() {
+                                break;
+                            }
+                        }
+
+                        if found_interface_id.is_none() {
+                            debug!("No bilateral relationship found for unknown remote interface");
+                        }
+
+                        found_interface_id
                     } else {
                         device_states[peer_device_index]
                             .device
@@ -444,7 +491,13 @@ pub mod neighbor_resolution {
                             .device
                             .get_interface(neighbor_info.local_interface_id)
                             .map(|i| i.name.clone())
-                            .unwrap_or_else(|| "unknown".to_string());
+                            .unwrap_or_else(|| {
+                                debug!(
+                                    "Couldn't match interface for local interface ID {}",
+                                    neighbor_info.local_interface_id
+                                );
+                                "unknown".to_string()
+                            });
 
                         // Establish bidirectional peer relationship using split_at_mut to avoid borrow conflicts
                         if device_index < peer_device_index {
@@ -529,12 +582,12 @@ pub mod neighbor_resolution {
         // This is a simplified version - real implementation would be more robust
 
         // Look for hostname in the raw data
-        let remote_hostname =
-            extract_hostname_from_cdp(raw_data).unwrap_or_else(|| "unknown".to_string());
+        let remote_hostname = extract_hostname_from_cdp(raw_data)
+            .unwrap_or_else(|| "unknown remote hostname".to_string());
 
         // Look for remote interface
-        let remote_interface =
-            extract_remote_interface_from_cdp(raw_data).unwrap_or_else(|| "unknown".to_string());
+        let remote_interface = extract_remote_interface_from_cdp(raw_data)
+            .unwrap_or_else(|| "unknown remote interface".to_string());
 
         // Determine connection type from interface names
         let connection_type = NeighborInfo::determine_connection_type(&remote_interface, None);
@@ -553,21 +606,43 @@ pub mod neighbor_resolution {
     /// Extract hostname from CDP data
     fn extract_hostname_from_cdp(cdp_data: &str) -> Option<String> {
         // Look for common CDP hostname patterns
-        for line in cdp_data.lines() {
+        let lines: Vec<&str> = cdp_data.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
             let line = line.trim();
+
             if line.starts_with("Device ID:") {
                 return Some(line.strip_prefix("Device ID:")?.trim().to_string());
             }
 
-            // Handle MikroTik neighbor format: "0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.example.com"
+            // Handle MikroTik neighbor format: both terse and tabular formats
             if !line.is_empty() && !line.starts_with('#') && !line.starts_with("Columns:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
+
+                // Try new terse format first - look for identity= key
+                if let Some(identity) = crate::brand::mikrotik::find_kv(&parts, "identity") {
+                    return Some(identity);
+                }
+
+                // Old tabular format: "0  sfp-sfpplus1  10.0.99.2  A0:23:9F:7B:2E:33  C3650.example.com"
                 if parts.len() >= 5 && parts[0].chars().all(|c| c.is_numeric()) {
-                    // MikroTik format: index, interface, address, mac, identity
                     return Some(parts[4].to_string());
                 }
 
-                // Handle Cisco CDP format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
+                // Handle Cisco CDP multi-line format:
+                // Line 1: "rb5009.example.com"
+                // Line 2: "Ten 1/1/3         98                R    MikroTik  vlan40"
+                if parts.len() == 1 && !parts[0].is_empty() && i + 1 < lines.len() {
+                    let next_line = lines[i + 1].trim();
+                    let next_parts = next_line.split_whitespace().collect::<Vec<&str>>();
+
+                    // Check if next line looks like CDP interface info with 6+ parts (Ten 1/1/3 101 R MikroTik bridge/sfp-sfpplus1)
+                    // and the first part doesn't look like a hostname (no dots)
+                    if next_parts.len() >= 6 && !next_parts[0].contains('.') {
+                        return Some(parts[0].to_string());
+                    }
+                }
+
+                // Handle Cisco CDP single-line format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
                 if parts.len() >= 6
                     && !parts[0].starts_with("Device")
                     && !parts[0].starts_with("Capability")
@@ -630,10 +705,10 @@ pub mod neighbor_resolution {
 
         // Try exact match against system identity (case-insensitive)
         for (index, device_state) in device_states.iter().enumerate() {
-            if let Some(ref system_identity) = device_state.device.system_identity {
-                if system_identity.eq_ignore_ascii_case(hostname) {
-                    return Some(index);
-                }
+            if let Some(ref system_identity) = device_state.device.system_identity
+                && system_identity.eq_ignore_ascii_case(hostname)
+            {
+                return Some(index);
             }
         }
 
@@ -764,6 +839,12 @@ impl Device {
     }
     pub fn with_interfaces(self, interfaces: Vec<Interface>) -> Self {
         Self { interfaces, ..self }
+    }
+    pub fn with_system_identity(self, system_identity: Option<String>) -> Self {
+        Self {
+            system_identity,
+            ..self
+        }
     }
 }
 

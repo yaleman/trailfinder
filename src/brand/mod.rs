@@ -17,6 +17,8 @@ pub trait DeviceHandler {
         devices: Vec<Device>,
     ) -> Result<usize, TrailFinderError>;
 
+    fn parse_identity(&mut self, input_data: &str) -> Result<(), TrailFinderError>;
+
     fn build(self) -> Device;
 
     /// Find an interface by name

@@ -4,7 +4,7 @@ use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
 
 use ssh_config::SSHConfig;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::{DeviceType, config::DeviceBrand};
 
@@ -87,6 +87,7 @@ impl SshClient {
             .or_else(|| host_config.get("identitiesonly"))
             .map(|v| v.to_lowercase() == "yes")
             .unwrap_or(false);
+
         let use_ssh_agent = !identities_only;
 
         // Get identity files from config
@@ -248,9 +249,9 @@ impl SshClient {
         match auth_method {
             AuthMethod::SshAgent => {
                 debug!("SSH agent authentication is not yet fully implemented");
-                debug!("To use your encrypted key, please convert it to OpenSSH format:");
-                debug!("  ssh-keygen -p -m OpenSSH -f ~/.ssh/your_key_file");
-                debug!("Or use an unencrypted key temporarily");
+                // debug!("To use your encrypted key, please convert it to OpenSSH format:");
+                // debug!("  ssh-keygen -p -m OpenSSH -f ~/.ssh/your_key_file");
+                // debug!("Or use an unencrypted key temporarily");
                 Ok(false)
             }
             AuthMethod::KeyFile { path, passphrase } => {
@@ -274,31 +275,31 @@ impl SshClient {
                 };
 
                 // Add diagnostics about the key file format
-                debug!("Key file size: {} bytes", key_data.len());
+                // debug!("Key file size: {} bytes", key_data.len());
                 if key_data.is_empty() {
                     debug!("Key file is empty");
                     return Ok(false);
                 }
 
-                let first_line = key_data.lines().next().unwrap_or("");
-                debug!("Key file first line: {}", first_line);
+                // let first_line = key_data.lines().next().unwrap_or("");
+                // debug!("Key file first line: {}", first_line);
 
                 // Check for common key format indicators
                 if key_data.contains("-----BEGIN OPENSSH PRIVATE KEY-----") {
-                    debug!("Detected OpenSSH format key");
+                    trace!("Detected OpenSSH format key");
                 } else if key_data.contains("-----BEGIN RSA PRIVATE KEY-----") {
-                    debug!("Detected RSA PEM format key");
+                    trace!("Detected RSA PEM format key");
                     if key_data.contains("Proc-Type: 4,ENCRYPTED") {
                         debug!("Key is encrypted with DEK-Info format");
                     }
                 } else if key_data.contains("-----BEGIN EC PRIVATE KEY-----") {
-                    debug!("Detected EC PEM format key");
+                    trace!("Detected EC PEM format key");
                 } else if key_data.contains("-----BEGIN PRIVATE KEY-----") {
-                    debug!("Detected PKCS#8 PEM format key");
+                    trace!("Detected PKCS#8 PEM format key");
                 } else if key_data.contains("-----BEGIN DSA PRIVATE KEY-----") {
-                    debug!("Detected DSA PEM format key");
+                    trace!("Detected DSA PEM format key");
                 } else {
-                    debug!("Unknown key format - no standard headers found");
+                    warn!("Unknown key format - no standard headers found");
                 }
 
                 // Try to load the key based on detected format
@@ -398,12 +399,12 @@ impl SshClient {
                         if success {
                             debug!("✅ Authenticated via key file: {}", expanded_path);
                         } else {
-                            debug!("Key file authentication failed: {}", expanded_path);
+                            warn!("Key file authentication failed: {}", expanded_path);
                         }
                         Ok(success)
                     }
                     Err(e) => {
-                        debug!("Key file authentication error: {}", e);
+                        error!("Key file authentication error: {}", e);
                         Ok(false)
                     }
                 }
@@ -457,7 +458,7 @@ impl SshClient {
             }
         };
 
-        debug!("Creating channel for command: {}", command);
+        trace!("Creating channel for command: {}", command);
         let mut channel = session.channel_open_session().await.map_err(|e| {
             debug!("Failed to create channel: {}", e);
             SshError::Command(format!("Failed to create channel: {}", e))
@@ -516,7 +517,7 @@ impl SshClient {
         }).await {
             Ok(_) => {}
             Err(_) => {
-                debug!("Command execution timed out after {:?}", timeout_duration);
+                error!("Command execution timed out after {:?}", timeout_duration);
                 return Err(SshError::Timeout);
             }
         }
@@ -524,7 +525,7 @@ impl SshClient {
         let output = match String::from_utf8(stdout_buffer) {
             Ok(s) => s,
             Err(e) => {
-                debug!("Failed to convert stdout buffer to UTF-8: {}", e);
+                error!("Failed to convert stdout buffer to UTF-8: {}", e);
                 // Try stderr as fallback
                 if !stderr_buffer.is_empty() {
                     String::from_utf8_lossy(&stderr_buffer).to_string()
