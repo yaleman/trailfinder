@@ -1,0 +1,88 @@
+{
+    "device": {
+        "device_id": "11111111-1111-1111-1111-111111111111",
+        "hostname": "router01",
+        "name": null,
+        "system_identity": "router01",
+        "owner": "Unknown",
+        "device_type": "Router",
+        "routes": [
+            {
+                "route_type": {
+                    "Default": "33333333-3333-3333-3333-333333333333"
+                },
+                "target": "0.0.0.0/0",
+                "gateway": "192.168.1.1",
+                "distance": 1
+            },
+            {
+                "route_type": {
+                    "Local": "44444444-4444-4444-4444-444444444444"
+                },
+                "target": "192.168.1.0/24",
+                "gateway": null,
+                "distance": 0
+            }
+        ],
+        "interfaces": [
+            {
+                "interface_id": "55555555-5555-5555-5555-555555555555",
+                "name": "ether1",
+                "vlans": [],
+                "addresses": [
+                    {
+                        "ip": "192.168.1.1",
+                        "prefix_length": 24
+                    }
+                ],
+                "interface_type": "Ethernet",
+                "comment": "LAN interface",
+                "mac_address": "00:11:22:33:44:55",
+                "neighbour_string_data": {
+                    "cisco-sw01@TenGigabitEthernet1/1/1": "cisco-sw01\nTen 1/1/1         120               R    Cisco  TenGigabitEthernet1/1/1"
+                },
+                "peers": {
+                    "Untagged": [
+                        "66666666-6666-6666-6666-666666666666"
+                    ]
+                }
+            },
+            {
+                "interface_id": "77777777-7777-7777-7777-777777777777",
+                "name": "sfp-sfpplus1",
+                "vlans": [],
+                "addresses": [],
+                "interface_type": "Ethernet",
+                "comment": "Uplink to Cisco switch",
+                "mac_address": "00:11:22:33:44:56",
+                "neighbour_string_data": {
+                    "cisco-sw01@TenGigabitEthernet1/1/1": "cisco-sw01\nTen 1/1/1         120               R    Cisco  TenGigabitEthernet1/1/1"
+                },
+                "peers": {
+                    "Untagged": [
+                        "66666666-6666-6666-6666-666666666666"
+                    ]
+                }
+            },
+            {
+                "interface_id": "88888888-8888-8888-8888-888888888888",
+                "name": "bridge",
+                "vlans": [],
+                "addresses": [],
+                "interface_type": "Bridge",
+                "comment": "Bridge interface",
+                "mac_address": "00:11:22:33:44:57",
+                "neighbour_string_data": {
+                    "cisco-sw01@TenGigabitEthernet1/1/1": "cisco-sw01\nTen 1/1/1         120               R    Cisco  TenGigabitEthernet1/1/1"
+                },
+                "peers": {
+                    "Untagged": [
+                        "66666666-6666-6666-6666-666666666666"
+                    ]
+                }
+            }
+        ]
+    },
+    "timestamp": "2024-01-01T00:00:00Z",
+    "config_hash": 12345
+}

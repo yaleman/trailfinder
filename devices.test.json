@@ -1,0 +1,37 @@
+{
+    "devices": [
+        {
+            "device_id": "11111111-1111-1111-1111-111111111111",
+            "hostname": "router01",
+            "ip_address": "192.168.1.1",
+            "brand": "Mikrotik",
+            "device_type": "Router",
+            "owner": {
+                "Named": "IT Department"
+            },
+            "ssh_username": null,
+            "ssh_port": 22,
+            "ssh_key_path": null,
+            "last_interrogated": null,
+            "notes": "Test router - MikroTik device"
+        },
+        {
+            "device_id": "22222222-2222-2222-2222-222222222222",
+            "hostname": "cisco-sw01",
+            "ip_address": "192.168.1.20",
+            "brand": "Cisco",
+            "device_type": "Switch",
+            "owner": {
+                "Named": "Network Team"
+            },
+            "ssh_username": "admin",
+            "ssh_port": 22,
+            "ssh_key_path": "~/.ssh/cisco_key",
+            "ssh_key_passphrase": "secret_passphrase",
+            "last_interrogated": null,
+            "notes": "Test Cisco switch"
+        }
+    ],
+    "ssh_timeout_seconds": 30,
+    "state_directory": "test_states"
+}

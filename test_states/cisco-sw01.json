@@ -1,0 +1,51 @@
+{
+    "device": {
+        "device_id": "22222222-2222-2222-2222-222222222222",
+        "hostname": "cisco-sw01",
+        "name": null,
+        "system_identity": "cisco-sw01",
+        "owner": "Unknown",
+        "device_type": "Switch",
+        "routes": [],
+        "interfaces": [
+            {
+                "interface_id": "66666666-6666-6666-6666-666666666666",
+                "name": "TenGigabitEthernet1/1/1",
+                "vlans": [],
+                "addresses": [
+                    {
+                        "ip": "192.168.1.20",
+                        "prefix_length": 24
+                    }
+                ],
+                "interface_type": {
+                    "Other": "TenGigabitEthernet1/1/1"
+                },
+                "comment": "Connection to MikroTik router",
+                "mac_address": "AA:BB:CC:DD:EE:FF",
+                "neighbour_string_data": {
+                    "router01@sfp-sfpplus1": "router01\nsfp-sfpplus1      114               R    MikroTik  sfp-sfpplus1/bridge"
+                },
+                "peers": {
+                    "Untagged": [
+                        "77777777-7777-7777-7777-777777777777",
+                        "88888888-8888-8888-8888-888888888888"
+                    ]
+                }
+            },
+            {
+                "interface_id": "99999999-9999-9999-9999-999999999999",
+                "name": "GigabitEthernet1/0/1",
+                "vlans": [],
+                "addresses": [],
+                "interface_type": "Ethernet",
+                "comment": "Access port",
+                "mac_address": "AA:BB:CC:DD:EE:F0",
+                "neighbour_string_data": {},
+                "peers": {}
+            }
+        ]
+    },
+    "timestamp": "2024-01-01T00:00:00Z",
+    "config_hash": 67890
+}
