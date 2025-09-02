@@ -245,7 +245,7 @@ async fn identify_command(
             }
         }
 
-        match identify_and_interrogate_device(device_config.clone(), app_config.use_ssh_agent())
+        match identify_and_interrogate_device(device_config.clone())
             .await
         {
             Ok((device_id, brand, device_type, device_state)) => {
@@ -373,14 +373,10 @@ async fn update_command(
 
     let mut tasks = JoinSet::new();
 
-    let use_ssh_agent = app_config.use_ssh_agent();
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            tasks.spawn(identify_and_interrogate_device(
-                device_config,
-                use_ssh_agent,
-            ));
+            tasks.spawn(identify_and_interrogate_device(device_config));
         }
     }
 
@@ -461,7 +457,6 @@ async fn update_command(
 
 async fn identify_and_interrogate_device(
     device_config: DeviceConfig,
-    use_ssh_agent: bool,
 ) -> Result<(Uuid, DeviceBrand, DeviceType, DeviceState), TrailFinderError> {
     // Use IP address if provided, otherwise resolve hostname
     let socket_addr = if let Some(ip) = device_config.ip_address {
@@ -489,54 +484,16 @@ async fn identify_and_interrogate_device(
     };
     let timeout = Duration::from_secs(30);
 
-    debug!("Connecting via SSH...");
+    debug!("Connecting via SSH using processed device config...");
 
-    // Try SSH config first, then fall back to manual config
-    let mut ssh_client =
-        match SshClient::connect_with_ssh_config(&device_config.hostname, socket_addr, timeout)
-            .await
-        {
-            Ok(client) => {
-                debug!("Connected using SSH config");
-                client
-            }
-            Err(e) => {
-                debug!("SSH config failed ({}), trying manual config...", e);
-
-                let username =
-                    device_config
-                        .ssh_username
-                        .as_deref()
-                        .ok_or(TrailFinderError::Config(
-                            "No SSH username configured".to_string(),
-                        ))?;
-
-                let password = std::env::var("SSH_PASSWORD").ok();
-                let key_path = device_config
-                    .ssh_key_path
-                    .as_deref()
-                    .map(shellexpand::tilde);
-
-                // Get passphrase from config or environment variable
-                let env_passphrase = std::env::var("SSH_KEY_PASSPHRASE").ok();
-                let key_passphrase = device_config
-                    .ssh_key_passphrase
-                    .as_deref()
-                    .or(env_passphrase.as_deref());
-
-                SshClient::connect(
-                    socket_addr,
-                    username,
-                    password.as_deref(),
-                    key_path.as_deref(),
-                    key_passphrase,
-                    use_ssh_agent, // Default to true
-                    timeout,
-                )
-                .await
-                .map_err(|err| TrailFinderError::Generic(err.to_string()))?
-            }
-        };
+    // Use the new method that leverages preprocessed SSH configuration
+    let mut ssh_client = SshClient::connect_with_device_config(
+        &device_config,
+        socket_addr,
+        timeout,
+    )
+    .await
+    .map_err(|err| TrailFinderError::Generic(err.to_string()))?;
 
     let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client).await?;
 

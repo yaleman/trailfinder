@@ -1,0 +1,9 @@
+
+Host example.com
+    User exampleuser
+
+Host *
+	IdentityFile ~/.ssh/%h
+	User foo
+
+Host example2.com

@@ -1,20 +1,6 @@
 # Trailfinder TODO
 
-## Recently Completed
-
-- [x] Device identity tracking - devices can now identify themselves with system identities separate from hostnames
-- [x] MikroTik system identity support via /system/identity/print command
-- [x] Cisco hostname parsing and system identity tracking
-- [x] Enhanced neighbor resolution with fuzzy hostname matching using both hostname and system identity
-- [x] Improved Cisco CDP parsing to handle multi-line detailed output format
-
-## Other Upcoming Features
-
-- [ ] implement proper ssh config parsing because currently it misses some things
-
-### UI changes
-
-- [x] When the route finds an edge that leads to a default gateway that's not linked to another device, it should link to an "internet" node.
+## Active Development
 
 ### Additional Device Brands
 
