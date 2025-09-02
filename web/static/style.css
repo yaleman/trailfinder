@@ -141,6 +141,11 @@ main {
     color: #666;
     margin-bottom: 0.5rem;
 }
+ul.device-stats  {
+
+    list-style: none;
+    display: inline;
+}
 
 .device-brand {
     font-weight: bold;
@@ -376,21 +381,21 @@ main {
         grid-template-columns: 1fr;
         gap: 1rem;
     }
-    
+
     nav {
         flex-wrap: wrap;
         gap: 0.5rem;
     }
-    
+
     .tab-button {
         padding: 0.4rem 0.8rem;
         font-size: 0.9rem;
     }
-    
+
     .devices-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .modal-content {
         width: 95%;
         margin: 2% auto;

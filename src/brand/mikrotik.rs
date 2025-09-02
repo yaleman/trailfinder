@@ -442,6 +442,7 @@ impl DeviceHandler for Mikrotik {
     }
 
     const GET_IP_COMMAND: &'static str = "/ip address print terse; /ipv6 address print terse";
+    const GET_IDENTITY_COMMAND: &'static str = "/system identity print";
 
     fn get_interfaces_command(&self) -> String {
         "/interface print without-paging detail".to_string()
@@ -486,7 +487,7 @@ impl DeviceHandler for Mikrotik {
 
             // Get system identity
             let identity_output = ssh_client
-                .execute_command("/system identity print")
+                .execute_command(Self::GET_IDENTITY_COMMAND)
                 .await
                 .unwrap_or_default();
             parser.parse_identity(&identity_output)?;

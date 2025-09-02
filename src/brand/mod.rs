@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 pub trait DeviceHandler {
     const GET_IP_COMMAND: &'static str;
+    const GET_IDENTITY_COMMAND: &'static str;
 
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self;
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError>;

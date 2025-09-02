@@ -37,6 +37,7 @@ impl Cisco {
 
 impl DeviceHandler for Cisco {
     const GET_IP_COMMAND: &'static str = "show ip interface  | i (is up|Internet address)";
+    const GET_IDENTITY_COMMAND: &'static str = "show running-config | include hostname";
 
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
@@ -460,7 +461,7 @@ impl DeviceHandler for Cisco {
 
             // Get system hostname/identity
             let hostname_output = ssh_client
-                .execute_command("show running-config | include hostname")
+                .execute_command(Self::GET_IDENTITY_COMMAND)
                 .await
                 .unwrap_or_default();
 
@@ -479,6 +480,7 @@ impl DeviceHandler for Cisco {
             parser.store_raw_cdp_data(&cdp_output)?;
 
             parser.parse_identity(&hostname_output)?;
+            parser.parse_ip_addresses(&ssh_client.execute_command(Self::GET_IP_COMMAND).await?)?;
 
             let device = parser.build();
 

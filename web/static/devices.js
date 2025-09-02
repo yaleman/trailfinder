@@ -71,10 +71,10 @@ function renderDevices(devices) {
             <h3>${device.hostname}</h3>
             ${device.name ? `<p class="device-name">${device.name}</p>` : ''}
             <div class="device-type ${(device.device_type || 'unknown').toLowerCase()}">${device.device_type || 'Unknown'}</div>
-            <div class="device-stats">
-                <span>📡 ${device.interface_count} interfaces</span>
-                <span>🛣️ ${device.route_count} routes</span>
-            </div>
+            <ul class="device-stats">
+                <li>📡 ${device.interface_count} interfaces</li>
+                <li>🛣️ ${device.route_count} routes</li>
+            </ul>
             ${device.brand ? `<div class="device-brand">${device.brand}</div>` : ''}
             ${device.last_seen ? `<div class="device-last-seen">Last seen: ${formatDate(device.last_seen)}</div>` : ''}
         </div>
@@ -225,7 +225,7 @@ function createInterfacesSection(interfaces) {
 
         // IP Addresses
         const addressesCell = document.createElement('td');
-        const addressesDisplay = iface.addresses.length > 0 
+        const addressesDisplay = iface.addresses.length > 0
             ? iface.addresses.map(addr => `${addr.ip}/${addr.prefix_length}`).join(', ')
             : 'None';
         addressesCell.textContent = addressesDisplay;
