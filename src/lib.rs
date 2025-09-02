@@ -10,6 +10,8 @@ use crate::ssh::SshError;
 pub mod brand;
 pub mod config;
 pub mod ssh;
+#[cfg(test)]
+mod tests;
 pub mod web;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -114,6 +116,13 @@ pub enum TrailFinderError {
     Regex(regex::Error),
     Serde(String),
     Io(std::io::Error),
+    WebDriverError(thirtyfour::error::WebDriverError),
+}
+
+impl From<thirtyfour::error::WebDriverError> for TrailFinderError {
+    fn from(err: thirtyfour::error::WebDriverError) -> Self {
+        TrailFinderError::WebDriverError(err)
+    }
 }
 
 impl From<SshError> for TrailFinderError {
@@ -158,6 +167,7 @@ impl std::fmt::Display for TrailFinderError {
             TrailFinderError::Config(error) => write!(f, "Config error: {}", error),
             TrailFinderError::Generic(error) => write!(f, "Generic error: {}", error),
             TrailFinderError::Ssh(error) => write!(f, "SSH error: {}", error),
+            TrailFinderError::WebDriverError(error) => write!(f, "WebDriver error: {error}"),
         }
     }
 }
@@ -862,74 +872,4 @@ pub(crate) fn setup_test_logging() {
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_device_identity_tracking() {
-        let mut device = Device::new(
-            "router.example.com".to_string(),
-            Some("Test Router".to_string()),
-            Owner::Named("Lab".to_string()),
-            DeviceType::Router,
-        );
-
-        // Initially no system identity
-        assert!(device.system_identity.is_none());
-
-        // Set system identity
-        device.system_identity = Some("MyRouter".to_string());
-        assert_eq!(device.system_identity, Some("MyRouter".to_string()));
-    }
-
-    #[test]
-    fn test_find_device_by_hostname_fuzzy_with_identity() {
-        use crate::config::DeviceState;
-
-        let device1 = Device::new(
-            "router1.example.com".to_string(),
-            None,
-            Owner::Unknown,
-            DeviceType::Router,
-        );
-        let mut device_state1 = DeviceState::new(device1, "test config");
-        device_state1.device.system_identity = Some("CoreRouter".to_string());
-
-        let device2 = Device::new(
-            "switch1.example.com".to_string(),
-            None,
-            Owner::Unknown,
-            DeviceType::Switch,
-        );
-        let device_state2 = DeviceState::new(device2, "test config 2");
-
-        let device_states = vec![device_state1, device_state2];
-
-        // Test finding by hostname
-        let result = neighbor_resolution::find_device_by_hostname_fuzzy("router1", &device_states);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), 0);
-
-        // Test finding by system identity
-        let result =
-            neighbor_resolution::find_device_by_hostname_fuzzy("CoreRouter", &device_states);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), 0);
-
-        // Test finding with domain stripping
-        let result = neighbor_resolution::find_device_by_hostname_fuzzy(
-            "router1.example.com",
-            &device_states,
-        );
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), 0);
-
-        // Test no match
-        let result =
-            neighbor_resolution::find_device_by_hostname_fuzzy("nonexistent", &device_states);
-        assert!(result.is_none());
-    }
 }

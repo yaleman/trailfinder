@@ -140,7 +140,9 @@ async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         ip_address: None,
     }) {
         Commands::Web { port, address } => {
-            return web_server_command(&app_config, &address, port).await;
+            web_server_command(&app_config, &address, port)
+                .await
+                .map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
         }
         Commands::Identify {
             hostname,

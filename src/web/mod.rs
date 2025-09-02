@@ -16,7 +16,8 @@ use tower_http::{
 use tracing::{Level, debug, info, instrument, warn};
 
 use crate::{
-    Device, DeviceType, PeerConnection, config::AppConfig, web::on_response::DefaultOnResponse,
+    Device, DeviceType, PeerConnection, TrailFinderError, config::AppConfig,
+    web::on_response::DefaultOnResponse,
 };
 use uuid::Uuid;
 
@@ -665,7 +666,7 @@ pub async fn web_server_command(
     app_config: &AppConfig,
     address: &str,
     port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), TrailFinderError> {
     info!("Starting web server on {}:{}", address, port);
 
     let state = AppState {

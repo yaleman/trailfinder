@@ -1,6 +1,6 @@
+use crate::{config::AppConfig, web::web_server_command};
 use std::time::Duration;
 use tokio::time::sleep;
-use trailfinder::{config::AppConfig, web::web_server_command};
 
 /// Browser integration test using the actual MCP Playwright integration
 /// This test verifies real functionality end-to-end

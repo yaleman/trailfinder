@@ -1,13 +1,13 @@
+use crate::config::DeviceState;
+use crate::web::*;
+use crate::{
+    Device, DeviceType, Interface, InterfaceAddress, InterfaceType, Owner, PeerConnection, Route,
+    RouteType,
+};
 use mac_address::MacAddress;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::str::FromStr;
-use trailfinder::config::DeviceState;
-use trailfinder::web::*;
-use trailfinder::{
-    Device, DeviceType, Interface, InterfaceAddress, InterfaceType, Owner, PeerConnection, Route,
-    RouteType,
-};
 
 fn create_test_device_with_routes(
     hostname: &str,
@@ -610,20 +610,20 @@ async fn test_live_topology_has_cdp_connections() {
     // Integration test to verify our topology shows CDP connections
     // This test uses test device configuration and state files
 
+    use crate::config::AppConfig;
     use std::sync::Arc;
-    use trailfinder::config::AppConfig;
 
     // Load the test configuration
     let config = AppConfig::load_from_file("devices.test.json").expect(
         "Failed to load devices.test.json - make sure you run this test from the project root",
     );
 
-    let app_state = trailfinder::web::AppState {
+    let app_state = AppState {
         config: Arc::new(config),
     };
 
     // Get the topology using our web API function
-    let result = trailfinder::web::get_network_topology(axum::extract::State(app_state)).await;
+    let result = crate::web::get_network_topology(axum::extract::State(app_state)).await;
     assert!(result.is_ok(), "Should successfully get network topology");
 
     let topology = result.unwrap().0;
@@ -638,7 +638,7 @@ async fn test_live_topology_has_cdp_connections() {
     let cdp_connections: Vec<_> = topology
         .connections
         .iter()
-        .filter(|c| matches!(c.connection_type, trailfinder::web::ConnectionType::CDP))
+        .filter(|c| matches!(c.connection_type, ConnectionType::CDP))
         .collect();
 
     // We should have at least some CDP connections if neighbor discovery worked

@@ -5,9 +5,9 @@
 //! 2. Multiple VLANs display correctly
 //! 3. Internet node appears in topology for external gateways
 //! 4. Device details modal works with new data structures
+use crate::{config::AppConfig, web::web_server_command};
 use std::time::Duration;
 use tokio::time::sleep;
-use trailfinder::{config::AppConfig, web::web_server_command};
 
 #[cfg(test)]
 mod playwright_tests {
