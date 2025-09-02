@@ -14,6 +14,8 @@ use tower_http::{
     trace::{DefaultMakeSpan, TraceLayer},
 };
 use tracing::{Level, debug, info, instrument, warn};
+use utoipa::{OpenApi, ToSchema};
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     Device, DeviceType, PeerConnection, TrailFinderError, config::AppConfig,
@@ -22,6 +24,50 @@ use crate::{
 use uuid::Uuid;
 
 pub(crate) mod on_response;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        list_devices,
+        get_device_details,
+        get_network_topology,
+        list_networks,
+        find_path,
+    ),
+    components(
+        schemas(
+            DeviceSummary,
+            NetworkTopology,
+            NetworkDevice,
+            NetworkConnection,
+            NetworkSegment,
+            PathFindRequest,
+            PathFindResponse,
+            PathEndpoint,
+            PathHop,
+            Position,
+            ConnectionType,
+            Device,
+            DeviceType,
+        )
+    ),
+    tags(
+        (name = "devices", description = "Device management and information"),
+        (name = "topology", description = "Network topology and visualization"),
+        (name = "networks", description = "Network segment information"),
+        (name = "pathfinding", description = "Network path discovery and analysis")
+    ),
+    info(
+        title = "Trailfinder API",
+        description = "Network device discovery and topology analysis API",
+        version = "0.1.0",
+        license(
+            name = "MIT",
+            identifier = "MIT"
+        )
+    )
+)]
+pub struct ApiDoc;
 
 // Template structs
 #[derive(Template, WebTemplate)]
@@ -47,7 +93,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct DeviceSummary {
     pub device_id: String,
     pub hostname: String,
@@ -59,14 +105,14 @@ pub struct DeviceSummary {
     pub last_seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct NetworkTopology {
     pub devices: Vec<NetworkDevice>,
     pub connections: Vec<NetworkConnection>,
     pub networks: Vec<NetworkSegment>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct NetworkDevice {
     pub device_id: String,
     pub hostname: String,
@@ -74,13 +120,13 @@ pub struct NetworkDevice {
     pub position: Option<Position>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct NetworkConnection {
     pub from: String,
     pub to: String,
@@ -89,7 +135,7 @@ pub struct NetworkConnection {
     pub connection_type: ConnectionType,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub enum ConnectionType {
     DirectLink,
     Gateway,
@@ -98,20 +144,20 @@ pub enum ConnectionType {
     CDP,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct NetworkSegment {
     pub network: String,
     pub vlan_id: Option<u16>,
     pub devices: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PathFindRequest {
     pub source: PathEndpoint,
     pub destination: PathEndpoint,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PathEndpoint {
     pub device: Option<String>,
     pub device_id: Option<String>,
@@ -119,7 +165,7 @@ pub struct PathEndpoint {
     pub ip: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct PathFindResponse {
     pub path: Vec<PathHop>,
     pub total_hops: usize,
@@ -127,7 +173,7 @@ pub struct PathFindResponse {
     pub error: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct PathHop {
     pub device: String,
     pub interface: String,
@@ -156,6 +202,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/topology", get(get_network_topology))
         .route("/api/networks", get(list_networks))
         .route("/api/pathfind", post(find_path))
+        // API Documentation routes
+        .merge(
+            SwaggerUi::new("/api-docs")
+                .url("/api-docs/openapi.json", ApiDoc::openapi())
+        )
         // Static assets
         .nest_service("/static", ServeDir::new("web/static"))
         .layer(tracelayer)
@@ -184,6 +235,16 @@ pub async fn serve_pathfinder_page() -> impl IntoResponse {
     }
 }
 
+/// List all devices with summary information
+#[utoipa::path(
+    get,
+    path = "/api/devices",
+    responses(
+        (status = 200, description = "List of all devices", body = [DeviceSummary]),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "devices"
+)]
 #[instrument(skip(state), fields(device_count), level = "info")]
 pub async fn list_devices(
     State(state): State<AppState>,
@@ -222,6 +283,20 @@ pub async fn list_devices(
     Ok(Json(devices))
 }
 
+/// Get detailed information about a specific device
+#[utoipa::path(
+    get,
+    path = "/api/devices/{device_id}",
+    params(
+        ("device_id" = Uuid, Path, description = "Device unique identifier")
+    ),
+    responses(
+        (status = 200, description = "Device details", body = Device),
+        (status = 404, description = "Device not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "devices"
+)]
 #[instrument(skip(state), fields(hostname), level = "info")]
 pub async fn get_device_details(
     Path(device_id): Path<Uuid>,
@@ -244,6 +319,16 @@ pub async fn get_device_details(
     Err(StatusCode::NOT_FOUND)
 }
 
+/// Get the network topology including devices, connections and network segments
+#[utoipa::path(
+    get,
+    path = "/api/topology",
+    responses(
+        (status = 200, description = "Network topology", body = NetworkTopology),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "topology"
+)]
 #[instrument(
     skip(state),
     fields(device_count, connection_count, network_count),
@@ -443,6 +528,16 @@ pub async fn get_network_topology(
     Ok(Json(topology))
 }
 
+/// List all network segments
+#[utoipa::path(
+    get,
+    path = "/api/networks",
+    responses(
+        (status = 200, description = "List of network segments", body = [NetworkSegment]),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "networks"
+)]
 #[instrument(skip(state), level = "info")]
 pub async fn list_networks(
     State(state): State<AppState>,
@@ -451,6 +546,17 @@ pub async fn list_networks(
     Ok(Json(topology.0.networks))
 }
 
+/// Find a path between two network endpoints
+#[utoipa::path(
+    post,
+    path = "/api/pathfind",
+    request_body = PathFindRequest,
+    responses(
+        (status = 200, description = "Path finding result", body = PathFindResponse),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "pathfinding"
+)]
 #[instrument(
     skip(state, request),
     fields(source_device, destination, success, hop_count),
@@ -679,7 +785,8 @@ pub async fn web_server_command(
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
     info!("🌐 Web UI available at: http://{}", bind_addr);
-    info!("📊 API documentation at: http://{}/api", bind_addr);
+    info!("📊 API documentation available at: http://{}/api-docs", bind_addr);
+    info!("📋 OpenAPI specification at: http://{}/api-docs/openapi.json", bind_addr);
     info!("Press Ctrl+C to stop the server");
 
     axum::serve(listener, app).await?;

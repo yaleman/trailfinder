@@ -676,3 +676,110 @@ async fn test_live_topology_has_cdp_connections() {
         cdp_connections
     );
 }
+
+#[tokio::test]
+async fn test_openapi_spec_generation() {
+    use crate::web::ApiDoc;
+    use utoipa::OpenApi;
+
+    // Generate the OpenAPI spec
+    let openapi = ApiDoc::openapi();
+    
+    // Verify basic structure
+    assert_eq!(openapi.info.title, "Trailfinder API");
+    assert_eq!(openapi.info.version, "0.1.0");
+    assert!(openapi.info.description.is_some());
+    
+    // Verify we have the expected paths
+    let paths = &openapi.paths;
+    assert!(paths.paths.contains_key("/api/devices"));
+    assert!(paths.paths.contains_key("/api/devices/{device_id}"));
+    assert!(paths.paths.contains_key("/api/topology"));
+    assert!(paths.paths.contains_key("/api/networks"));
+    assert!(paths.paths.contains_key("/api/pathfind"));
+    
+    // Verify we have schemas for our response types
+    let schemas = &openapi.components.as_ref().unwrap().schemas;
+    assert!(schemas.contains_key("DeviceSummary"));
+    assert!(schemas.contains_key("NetworkTopology"));
+    assert!(schemas.contains_key("PathFindRequest"));
+    assert!(schemas.contains_key("PathFindResponse"));
+    
+    println!("OpenAPI spec validation passed! Found {} paths and {} schemas", 
+             paths.paths.len(), schemas.len());
+}
+
+#[tokio::test]
+async fn test_openapi_json_serialization() {
+    use crate::web::ApiDoc;
+    use utoipa::OpenApi;
+
+    // Generate the OpenAPI spec and serialize to JSON
+    let openapi = ApiDoc::openapi();
+    let json_result = serde_json::to_string(&openapi);
+    
+    assert!(json_result.is_ok(), "Should be able to serialize OpenAPI spec to JSON");
+    
+    let json_string = json_result.unwrap();
+    assert!(!json_string.is_empty(), "JSON string should not be empty");
+    assert!(json_string.contains("Trailfinder API"), "JSON should contain API title");
+    assert!(json_string.contains("/api/devices"), "JSON should contain API paths");
+    
+    // Verify it can be parsed back
+    let parsed_result: Result<serde_json::Value, _> = serde_json::from_str(&json_string);
+    assert!(parsed_result.is_ok(), "Generated JSON should be valid and parseable");
+    
+    println!("OpenAPI JSON serialization test passed! JSON length: {} characters", 
+             json_string.len());
+}
+
+#[tokio::test]
+async fn test_swagger_ui_integration() {
+    use crate::web::{create_router, AppState};
+    use crate::config::AppConfig;
+    use std::sync::Arc;
+    use axum::extract::Request;
+    use axum::body::Body;
+    use tower::ServiceExt; // for oneshot
+    use axum::http::StatusCode;
+
+    // Create a minimal test config
+    let config = AppConfig {
+        devices: vec![],
+        ssh_timeout_seconds: 30,
+        use_ssh_agent: Some(true),
+        state_directory: None,
+    };
+    
+    let app_state = AppState {
+        config: Arc::new(config),
+    };
+    
+    // Create the router with Swagger UI integration
+    let app = create_router(app_state);
+    
+    // Test that the Swagger UI endpoint exists and returns a response (redirect to trailing slash)
+    let request = Request::builder()
+        .uri("/api-docs")
+        .body(Body::empty())
+        .unwrap();
+    
+    let response = app.clone().oneshot(request).await.unwrap();
+    // Swagger UI redirects /api-docs to /api-docs/ so we expect a 303
+    assert!(
+        response.status() == StatusCode::SEE_OTHER || response.status() == StatusCode::OK,
+        "Swagger UI endpoint should return redirect (303) or OK (200), got: {}",
+        response.status()
+    );
+    
+    // Test that the OpenAPI JSON endpoint exists
+    let request = Request::builder()
+        .uri("/api-docs/openapi.json")
+        .body(Body::empty())
+        .unwrap();
+    
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "OpenAPI JSON endpoint should return OK");
+    
+    println!("Swagger UI integration test passed!");
+}

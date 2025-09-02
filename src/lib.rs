@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display, net::IpAddr};
 use cidr::errors::NetworkParseError;
 use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::ssh::SshError;
@@ -14,7 +15,7 @@ pub mod ssh;
 mod tests;
 pub mod web;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub enum DeviceType {
     Router,
     Switch,
@@ -33,7 +34,7 @@ impl std::fmt::Display for DeviceType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub enum Owner {
     Unknown,
     Named(String),
@@ -49,7 +50,7 @@ impl From<String> for Owner {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Device {
     pub device_id: uuid::Uuid,
     pub hostname: String,
@@ -69,7 +70,7 @@ pub enum Upstream {
     Gateway(IpAddr),
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum InterfaceType {
     Ethernet,
     Vlan,
@@ -174,8 +175,9 @@ impl std::fmt::Display for TrailFinderError {
 
 impl std::error::Error for TrailFinderError {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InterfaceAddress {
+    #[schema(value_type = String, example = "192.168.1.1")]
     pub ip: IpAddr,
     pub prefix_length: u8,
 }
@@ -206,7 +208,7 @@ impl Display for InterfaceAddress {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
 pub enum PeerConnection {
     /// Direct interface connection, no VLAN tagging
     Untagged,
@@ -232,17 +234,19 @@ impl Display for PeerConnection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NeighborInfo {
     /// Hostname of the remote device
     pub remote_hostname: String,
     /// Interface name on the remote device (as reported by CDP/LLDP)
     pub remote_interface: String,
     /// MAC address of the remote device interface (if available)
+    #[schema(value_type = Option<String>, example = "00:11:22:33:44:55")]
     pub remote_mac_address: Option<MacAddress>,
     /// UUID reference to the local interface
     pub local_interface_id: Uuid,
     /// MAC address of the local interface (if available)
+    #[schema(value_type = Option<String>, example = "00:11:22:33:44:55")]
     pub local_mac_address: Option<MacAddress>,
     /// Type of peer connection (VLAN, trunk, etc.)
     pub connection_type: PeerConnection,
@@ -250,7 +254,7 @@ pub struct NeighborInfo {
     pub discovery_protocol: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Interface {
     pub interface_id: Uuid,
     pub name: String,
@@ -259,6 +263,7 @@ pub struct Interface {
     pub interface_type: InterfaceType,
     pub comment: Option<String>,
     /// MAC address of this interface (if available)
+    #[schema(value_type = Option<String>, example = "00:11:22:33:44:55")]
     pub mac_address: Option<MacAddress>,
 
     /// Storing neighbour discovery data
@@ -778,7 +783,7 @@ pub mod neighbor_resolution {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub enum RouteType {
     Default(Uuid),
     /// Has a gateway
@@ -787,10 +792,12 @@ pub enum RouteType {
     Local(Uuid),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Route {
     pub route_type: RouteType,
+    #[schema(value_type = String, example = "192.168.1.0/24")]
     pub target: cidr::IpCidr,
+    #[schema(value_type = Option<String>, example = "192.168.1.1")]
     pub gateway: Option<IpAddr>,
     pub distance: Option<u16>,
 }
