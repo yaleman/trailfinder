@@ -1,10 +1,12 @@
 use cidr::IpCidr;
 use regex::Regex;
+use std::net::IpAddr;
 use std::str::FromStr;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use super::prelude::*;
+use crate::InterfaceAddress;
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
 
@@ -34,6 +36,8 @@ impl Cisco {
 }
 
 impl DeviceHandler for Cisco {
+    const GET_IP_COMMAND: &'static str = "show ip interface  | i (is up|Internet address)";
+
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
             hostname,
@@ -316,6 +320,84 @@ impl DeviceHandler for Cisco {
         Ok(mods_made)
     }
 
+    fn parse_ip_addresses(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
+        let mut current_interface = String::new();
+        let mut current_address = String::new();
+
+        for line in input_data.lines() {
+            if line.trim().is_empty() || line.starts_with('#') {
+                continue;
+            }
+            trace!("Line: {line}");
+            if line.contains("is up") {
+                current_interface = line
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                continue;
+            } else if line.contains("Internet address is") {
+                current_address = line
+                    .split_whitespace()
+                    .last()
+                    .unwrap_or_default()
+                    .to_string();
+            }
+
+            if current_address.is_empty() || current_interface.is_empty() {
+                continue;
+            }
+
+            let ipaddr =
+                match IpAddr::from_str(current_address.split("/").next().unwrap_or_default()) {
+                    Ok(addr) => addr,
+                    Err(err) => {
+                        error!("Failed to parse {current_address} as IpAddr: {err:?}");
+                        continue;
+                    }
+                };
+
+            let mask: u8 = match current_address
+                .split("/")
+                .nth(1)
+                .unwrap_or_default()
+                .parse()
+            {
+                Ok(val) => val,
+                Err(err) => {
+                    error!("Failed to parse {current_address} as mask: {err:?}");
+                    continue;
+                }
+            };
+            let interface_address = InterfaceAddress::from((ipaddr, mask));
+
+            debug!("Found interface={current_interface} interface_address={interface_address}");
+
+            let mut added = false;
+
+            // Here you would typically add the found interface and address to your data structure
+            self.interfaces.iter_mut().for_each(|iface| {
+                if iface.name != current_interface {
+                    return;
+                }
+                if !iface.addresses.contains(&interface_address) {
+                    iface.addresses.push(interface_address.clone());
+                    info!("Adding address to interface={current_interface} address={interface_address}");
+                    added = true;
+                }
+            });
+
+            if !added {
+                warn!(
+                    "Couldn't find matching interface {current_interface} to add address={interface_address}"
+                )
+            }
+            current_address.clear();
+            current_interface.clear();
+        }
+        Ok(())
+    }
+
     fn build(self) -> Device {
         Device::new(self.hostname, self.name, self.owner, self.device_type)
             .with_routes(self.routes)
@@ -364,16 +446,17 @@ impl DeviceHandler for Cisco {
     ) -> impl std::future::Future<Output = Result<DeviceState, TrailFinderError>> + Send {
         async move {
             // Get interfaces data
-            let interfaces_command = self.get_interfaces_command();
-            let interfaces_output = ssh_client.execute_command(&interfaces_command).await?;
+            let interfaces_output = ssh_client
+                .execute_command(&self.get_interfaces_command())
+                .await?;
 
             // Get routes data
-            let routes_command = self.get_routes_command();
-            let routes_output = ssh_client.execute_command(&routes_command).await?;
+            let routes_output = ssh_client
+                .execute_command(&self.get_routes_command())
+                .await?;
 
             // Get CDP/neighbor data
-            let cdp_command = self.get_cdp_command();
-            let cdp_output = ssh_client.execute_command(&cdp_command).await?;
+            let cdp_output = ssh_client.execute_command(&self.get_cdp_command()).await?;
 
             // Get system hostname/identity
             let hostname_output = ssh_client
@@ -617,34 +700,20 @@ impl Cisco {
 
 #[cfg(test)]
 mod tests {
+
     use crate::setup_test_logging;
 
     use super::*;
 
     #[test]
     fn test_cisco_interface_parsing() {
-        let cisco_interfaces = r#"
-GigabitEthernet0/1 is up, line protocol is up
-  Hardware is Gigabit Ethernet, address is 0050.56c0.0001 (bia 0050.56c0.0001)
-  Internet address is 192.168.1.10/24
-FastEthernet0/2 is down, line protocol is down
-  Hardware is Fast Ethernet, address is 0050.56c0.0002 (bia 0050.56c0.0002)
-Vlan1 is up, line protocol is up
-  Hardware is EtherSVI, address is 0050.56c0.0003 (bia 0050.56c0.0003)
-  Internet address is 192.168.10.1/24
-Loopback0 is up, line protocol is up
-  Hardware is Loopback
-"#;
+        let mut parser = Cisco::test_device();
 
-        let mut parser = Cisco::new(
-            "cisco-test.example.com".to_string(),
-            Some("cisco-test".to_string()),
-            Owner::Named("Test Lab".to_string()),
-            DeviceType::Switch,
-        );
-
-        let result = parser.parse_interfaces(cisco_interfaces);
-        assert!(result.is_ok(), "Interface parsing should succeed");
+        let cisco_interfaces =
+            std::fs::read_to_string("src/tests/cisco_interfaces.txt").expect("Failed to read");
+        parser
+            .parse_interfaces(&cisco_interfaces)
+            .expect("Failed to parse cisco interface data");
 
         let device = parser.build();
         assert!(
@@ -691,12 +760,7 @@ C     192.168.10.0/24 is directly connected, Vlan1
 S     10.0.0.0/8 [1/0] via 192.168.1.254
 "#;
 
-        let mut parser = Cisco::new(
-            "cisco-test.example.com".to_string(),
-            Some("cisco-test".to_string()),
-            Owner::Named("Test Lab".to_string()),
-            DeviceType::Router,
-        );
+        let mut parser = Cisco::test_device();
 
         let result = parser.parse_routes(cisco_routes);
         assert!(result.is_ok(), "Route parsing should succeed");
@@ -786,70 +850,13 @@ advertisement version: 1
 
 Total cdp entries displayed : 4"#;
 
-        let test_interface_data = r#"Vlan1 is administratively down, line protocol is down , Autostate Enabled
-GigabitEthernet0/0 is up, line protocol is up
-GigabitEthernet1/0/1 is up, line protocol is up (connected)
-GigabitEthernet1/0/2 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/3 is up, line protocol is up (connected)
-GigabitEthernet1/0/4 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/5 is up, line protocol is up (connected)
-GigabitEthernet1/0/6 is up, line protocol is up (connected)
-GigabitEthernet1/0/7 is up, line protocol is up (connected)
-GigabitEthernet1/0/8 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/9 is up, line protocol is up (connected)
-GigabitEthernet1/0/10 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/11 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/12 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/13 is up, line protocol is up (connected)
-GigabitEthernet1/0/14 is up, line protocol is up (connected)
-GigabitEthernet1/0/15 is up, line protocol is up (connected)
-GigabitEthernet1/0/16 is up, line protocol is up (connected)
-GigabitEthernet1/0/17 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/18 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/19 is up, line protocol is up (connected)
-GigabitEthernet1/0/20 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/21 is up, line protocol is up (connected)
-GigabitEthernet1/0/22 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/23 is up, line protocol is up (connected)
-GigabitEthernet1/0/24 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/25 is up, line protocol is up (connected)
-GigabitEthernet1/0/26 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/27 is up, line protocol is up (connected)
-GigabitEthernet1/0/28 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/29 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/30 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/31 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/32 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/33 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/34 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/35 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/36 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/37 is up, line protocol is up (connected)
-GigabitEthernet1/0/38 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/39 is up, line protocol is up (connected)
-GigabitEthernet1/0/40 is down, line protocol is down (notconnect)
-GigabitEthernet1/0/41 is up, line protocol is up (connected)
-GigabitEthernet1/0/42 is up, line protocol is up (connected)
-GigabitEthernet1/0/43 is up, line protocol is up (connected)
-GigabitEthernet1/0/44 is up, line protocol is up (connected)
-GigabitEthernet1/0/45 is up, line protocol is up (connected)
-GigabitEthernet1/0/46 is up, line protocol is up (connected)
-GigabitEthernet1/0/47 is up, line protocol is up (connected)
-GigabitEthernet1/0/48 is up, line protocol is up (connected)
-GigabitEthernet1/1/1 is down, line protocol is down (notconnect)
-GigabitEthernet1/1/2 is down, line protocol is down (notconnect)
-TenGigabitEthernet1/1/3 is up, line protocol is up (connected)
-TenGigabitEthernet1/1/4 is down, line protocol is down (notconnect)
-Port-channel2 is up, line protocol is up (connected)"#;
+        let test_interface_data =
+            std::fs::read_to_string("src/tests/cisco_interfaces2.txt").expect("Failed to read");
 
-        let mut device = Cisco::new(
-            "test.example.com".to_string(),
-            None,
-            Owner::Unknown,
-            DeviceType::Switch,
-        );
+        let mut device = Cisco::test_device();
+
         device
-            .parse_interfaces(test_interface_data)
+            .parse_interfaces(&test_interface_data)
             .expect("Failed to parse interfaces");
 
         device.parse_routes("").expect("Failed to parse routes");
@@ -899,6 +906,34 @@ hostname TestDevice
             test_device.system_identity.unwrap(),
             "TestDevice",
             "Should extract hostname from config"
+        );
+    }
+    #[test]
+    fn test_parse_cisco_addresses() {
+        setup_test_logging();
+
+        let mut parser = Cisco::test_device();
+
+        let cisco_interfaces =
+            std::fs::read_to_string("src/tests/cisco_interfaces.txt").expect("Failed to read");
+        parser
+            .parse_interfaces(&cisco_interfaces)
+            .expect("Failed to parse cisco interface data");
+
+        let result = parser.parse_ip_addresses(
+            &std::fs::read_to_string("src/tests/cisco_addresses.txt").expect("Failed to read"),
+        );
+        assert!(result.is_ok(), "IP address parsing should succeed");
+
+        assert!(
+            parser
+                .interfaces
+                .iter()
+                .any(|iface| !iface.addresses.contains(&InterfaceAddress::from((
+                    "10.0.99.2".parse().expect("Failed to parse ip address"),
+                    24
+                )))),
+            "At least one interface should have addresses"
         );
     }
 }

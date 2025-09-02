@@ -8,6 +8,8 @@ use prelude::*;
 use uuid::Uuid;
 
 pub trait DeviceHandler {
+    const GET_IP_COMMAND: &'static str;
+
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self;
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError>;
     fn parse_routes(&mut self, input_data: &str) -> Result<(), TrailFinderError>;
@@ -18,6 +20,7 @@ pub trait DeviceHandler {
     ) -> Result<usize, TrailFinderError>;
 
     fn parse_identity(&mut self, input_data: &str) -> Result<(), TrailFinderError>;
+    fn parse_ip_addresses(&mut self, input_data: &str) -> Result<(), TrailFinderError>;
 
     fn build(self) -> Device;
 

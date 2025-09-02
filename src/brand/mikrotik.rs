@@ -6,7 +6,9 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::prelude::*;
+use crate::InterfaceAddress;
 use crate::config::{DeviceConfig, DeviceState};
+
 use crate::ssh::SshClient;
 
 pub struct Mikrotik {
@@ -376,10 +378,70 @@ impl DeviceHandler for Mikrotik {
             .with_system_identity(self.system_identity)
     }
 
+    fn parse_ip_addresses(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
+        for line in input_data.lines() {
+            let parts = line.split_whitespace().collect();
+            if line.trim().is_empty() {
+                continue;
+            }
+            debug!("handling line: {line}");
+            if let Some(addr_str) = find_kv(&parts, "address") {
+                let addr = match InterfaceAddress::try_from(addr_str.as_str()) {
+                    Err(err) => {
+                        error!("Failed to parse address '{}': {}", addr_str, err);
+                        continue;
+                    }
+                    Ok(addr) => addr,
+                };
+
+                // see if we already have this assigned to an interface
+                if !self
+                    .interfaces
+                    .iter()
+                    .any(|iface| iface.addresses.contains(&addr))
+                {
+                    // we can carry on and add it
+                    let interface_name = match find_kv(&parts, "actual-interface") {
+                        Some(val) => val,
+                        None => match find_kv(&parts, "interface") {
+                            Some(val) => val,
+                            None => {
+                                error!("Could not find interface name for address {addr}");
+                                continue;
+                            }
+                        },
+                    };
+
+                    debug!("Interface: {interface_name} address={addr}");
+                    if let Some(existing_interface) = self
+                        .interfaces
+                        .iter_mut()
+                        .find(|iface| iface.name == interface_name)
+                    {
+                        existing_interface.addresses.push(addr.clone());
+                        info!(
+                            "Added address {addr} to interface {}",
+                            existing_interface.name
+                        );
+                    } else {
+                        error!("Could not find interface {interface_name} for address {addr}");
+                    }
+                } else {
+                    debug!("Already have {addr}");
+                }
+            } else {
+                debug!("couldn't find an address kv!");
+            }
+        }
+        Ok(())
+    }
+
     fn get_cdp_command(&self) -> String {
         "/ip neighbor print terse without-paging proplist=interface,address,mac-address,identity"
             .to_string()
     }
+
+    const GET_IP_COMMAND: &'static str = "/ip address print terse; /ipv6 address print terse";
 
     fn get_interfaces_command(&self) -> String {
         "/interface print without-paging detail".to_string()
@@ -428,6 +490,13 @@ impl DeviceHandler for Mikrotik {
                 .await
                 .unwrap_or_default();
             parser.parse_identity(&identity_output)?;
+
+            parser.parse_ip_addresses(
+                ssh_client
+                    .execute_command(Self::GET_IP_COMMAND)
+                    .await?
+                    .as_str(),
+            )?;
 
             let device = parser.build();
 
@@ -521,9 +590,10 @@ fn test_parse_mikrotik() {
     crate::setup_test_logging();
     use std::fs::read_to_string;
 
-    let interfaces_input =
-        read_to_string("mikrotik_interfaces.txt").expect("Failed to read interfaces file");
-    let routes_input = read_to_string("mikrotik_routes.txt").expect("Failed to read routes file");
+    let interfaces_input = read_to_string("src/tests/mikrotik_interfaces.txt")
+        .expect("Failed to read interfaces file");
+    let routes_input =
+        read_to_string("src/tests/mikrotik_routes.txt").expect("Failed to read routes file");
 
     let mut parser = Mikrotik::new(
         "test-router.example.com".to_string(),
@@ -539,6 +609,26 @@ fn test_parse_mikrotik() {
     // Parse routes
     let route_result = parser.parse_routes(&routes_input);
     assert!(route_result.is_ok(), "Route parsing should succeed");
+
+    let address_data = std::fs::read_to_string("src/tests/mikrotik_addresses.txt")
+        .expect("Failed to read address file");
+
+    parser
+        .parse_ip_addresses(&address_data)
+        .expect("Failed to parse IP addresses");
+
+    assert!(!parser.interfaces.is_empty(), "Should have interfaces");
+    assert!(parser.interfaces.iter().any(|iface| {
+        iface
+            .addresses
+            .iter()
+            .any(|addr| addr.to_string() == "123.123.123.230/22")
+    }));
+    assert!(parser.interfaces.iter().any(|iface| {
+        iface.addresses.iter().any(|addr| {
+            addr.to_string() == "2001:388:30bc:cafe::beef/128" && iface.name == "ether1"
+        })
+    }));
 
     // Build final device
     let device = parser.build();
@@ -634,8 +724,8 @@ fn test_mikrotik_interface_types() {
     crate::setup_test_logging();
     use std::fs::read_to_string;
 
-    let interfaces_input =
-        read_to_string("mikrotik_interfaces.txt").expect("Failed to read interfaces file");
+    let interfaces_input = read_to_string("src/tests/mikrotik_interfaces.txt")
+        .expect("Failed to read interfaces file");
 
     let mut parser = Mikrotik::new(
         "test.example.com".to_string(),
@@ -685,7 +775,8 @@ fn test_mikrotik_route_types() {
 
     use std::fs::read_to_string;
 
-    let routes_input = read_to_string("mikrotik_routes.txt").expect("Failed to read routes file");
+    let routes_input =
+        read_to_string("src/tests/mikrotik_routes.txt").expect("Failed to read routes file");
 
     let mut parser = Mikrotik::new(
         "test.example.com".to_string(),

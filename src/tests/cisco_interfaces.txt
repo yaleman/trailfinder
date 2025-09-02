@@ -1,0 +1,11 @@
+GigabitEthernet0/0 is up, line protocol is up
+GigabitEthernet0/1 is up, line protocol is up
+  Hardware is Gigabit Ethernet, address is 0050.56c0.0001 (bia 0050.56c0.0001)
+  Internet address is 192.168.1.10/24
+FastEthernet0/2 is down, line protocol is down
+  Hardware is Fast Ethernet, address is 0050.56c0.0002 (bia 0050.56c0.0002)
+Vlan1 is up, line protocol is up
+  Hardware is EtherSVI, address is 0050.56c0.0003 (bia 0050.56c0.0003)
+  Internet address is 192.168.10.1/24
+Loopback0 is up, line protocol is up
+  Hardware is Loopback

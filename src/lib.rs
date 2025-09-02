@@ -175,11 +175,44 @@ impl std::fmt::Display for TrailFinderError {
 
 impl std::error::Error for TrailFinderError {}
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Eq, PartialEq)]
 pub struct InterfaceAddress {
     #[schema(value_type = String, example = "192.168.1.1")]
     pub ip: IpAddr,
     pub prefix_length: u8,
+}
+
+impl TryFrom<&str> for InterfaceAddress {
+    type Error = TrailFinderError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let parts: Vec<&str> = value.split('/').collect();
+        if parts.len() != 2 {
+            return Err(TrailFinderError::InvalidLine(format!(
+                "Invalid CIDR notation: {}",
+                value
+            )));
+        }
+
+        let ip = parts[0].parse().map_err(|err| {
+            TrailFinderError::Parse(format!("Invalid IP address '{}': {}", parts[0], err))
+        })?;
+
+        let prefix_length = parts[1].parse().map_err(|err| {
+            TrailFinderError::Parse(format!("Invalid prefix length '{}': {}", parts[1], err))
+        })?;
+
+        Ok(Self { ip, prefix_length })
+    }
+}
+
+impl From<(IpAddr, u8)> for InterfaceAddress {
+    fn from(value: (IpAddr, u8)) -> Self {
+        Self {
+            ip: value.0,
+            prefix_length: value.1,
+        }
+    }
 }
 
 impl InterfaceAddress {
