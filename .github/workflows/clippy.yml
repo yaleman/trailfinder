@@ -26,7 +26,8 @@ jobs:
           sudo apt-get install -y \
             libssl-dev \
             libwayland-dev \
-            pkg-config
+            pkg-config \
+            libkpipewire-dev
       - name: "Run clippy"
         run: cargo clippy --all-targets
       - name: Run sccache stat for check

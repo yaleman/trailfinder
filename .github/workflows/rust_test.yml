@@ -28,7 +28,8 @@ jobs:
           sudo apt-get install -y \
             libssl-dev \
             libwayland-dev \
-            pkg-config
+            pkg-config \
+            libkpipewire-dev
       - name: "Run cargo test"
         run: cargo test
       - name: "Run cargo clippy"
