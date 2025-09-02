@@ -27,7 +27,7 @@ jobs:
           sudo apt-get update && \
           sudo apt-get install -y \
             libssl-dev \
-            libwayland-client0 \
+            libwayland-dev
             pkgconfig
       - name: "Run cargo test"
         run: cargo test
