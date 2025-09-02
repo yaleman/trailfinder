@@ -20,6 +20,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - name: install chromedriver
+        uses: nanasess/setup-chromedriver@v2
       - name: Install typical dependencies
         run: |
           sudo apt-get update && \
