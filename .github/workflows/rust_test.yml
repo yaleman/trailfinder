@@ -29,7 +29,7 @@ jobs:
             libssl-dev \
             libwayland-dev \
             pkg-config \
-            libkpipewire-dev
+            libpipewire-0.3-dev
       - name: "Run cargo test"
         run: cargo test
       - name: "Run cargo clippy"
