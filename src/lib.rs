@@ -16,7 +16,7 @@ pub mod ssh;
 mod tests;
 pub mod web;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum DeviceType {
     Router,
     Switch,
@@ -858,7 +858,7 @@ pub mod neighbor_resolution {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub enum RouteType {
     Default(Uuid),
     /// Has a gateway
@@ -954,4 +954,585 @@ pub(crate) fn setup_test_logging() {
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();
+}
+
+#[cfg(test)]
+mod lib_tests {
+    use super::*;
+    use cidr::Ipv4Cidr;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_device_type_display() {
+        assert_eq!(DeviceType::Router.to_string(), "Router");
+        assert_eq!(DeviceType::Switch.to_string(), "Switch");
+        assert_eq!(DeviceType::Firewall.to_string(), "Firewall");
+        assert_eq!(DeviceType::AccessPoint.to_string(), "Access Point");
+    }
+
+    #[test]
+    fn test_device_type_debug() {
+        let debug_output = format!("{:?}", DeviceType::Router);
+        assert!(debug_output.contains("Router"));
+    }
+
+    #[test]
+    fn test_owner_from_string() {
+        assert!(matches!(Owner::from(String::new()), Owner::Unknown));
+        assert!(matches!(Owner::from("".to_string()), Owner::Unknown));
+
+        let owner = Owner::from("Test Owner".to_string());
+        if let Owner::Named(name) = owner {
+            assert_eq!(name, "Test Owner");
+        } else {
+            panic!("Expected Named owner");
+        }
+    }
+
+    #[test]
+    fn test_owner_serialization() {
+        let unknown = Owner::Unknown;
+        let named = Owner::Named("Test".to_string());
+
+        // Test that they can be serialized/deserialized
+        let unknown_json = serde_json::to_string(&unknown).unwrap();
+        let named_json = serde_json::to_string(&named).unwrap();
+
+        assert!(unknown_json.contains("Unknown"));
+        assert!(named_json.contains("Test"));
+
+        let deserialized_unknown: Owner = serde_json::from_str(&unknown_json).unwrap();
+        let deserialized_named: Owner = serde_json::from_str(&named_json).unwrap();
+
+        assert!(matches!(deserialized_unknown, Owner::Unknown));
+        if let Owner::Named(name) = deserialized_named {
+            assert_eq!(name, "Test");
+        } else {
+            panic!("Expected Named owner after deserialization");
+        }
+    }
+
+    #[test]
+    fn test_interface_type_display() {
+        assert_eq!(InterfaceType::Ethernet.to_string(), "ether");
+        assert_eq!(InterfaceType::Vlan.to_string(), "vlan");
+        assert_eq!(InterfaceType::Bridge.to_string(), "bridge");
+        assert_eq!(InterfaceType::Loopback.to_string(), "loopback");
+        assert_eq!(InterfaceType::VirtualEthernet.to_string(), "veth");
+        assert_eq!(
+            InterfaceType::Other("custom".to_string()).to_string(),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn test_interface_type_from_str() {
+        assert_eq!(InterfaceType::from("bridge"), InterfaceType::Bridge);
+        assert_eq!(InterfaceType::from("ether"), InterfaceType::Ethernet);
+        assert_eq!(InterfaceType::from("ethernet"), InterfaceType::Ethernet);
+        assert_eq!(InterfaceType::from("vlan"), InterfaceType::Vlan);
+        assert_eq!(InterfaceType::from("loopback"), InterfaceType::Loopback);
+        assert_eq!(InterfaceType::from("veth"), InterfaceType::VirtualEthernet);
+        assert_eq!(
+            InterfaceType::from("unknown"),
+            InterfaceType::Other("unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn test_trailfinder_error_display() {
+        let ssh_error = TrailFinderError::Ssh(crate::ssh::SshError::Timeout);
+        assert_eq!(ssh_error.to_string(), "SSH error: Operation timed out");
+
+        let generic_error = TrailFinderError::Generic("Test error".to_string());
+        assert_eq!(generic_error.to_string(), "Generic error: Test error");
+
+        let config_error = TrailFinderError::Config("Invalid config".to_string());
+        assert_eq!(config_error.to_string(), "Config error: Invalid config");
+
+        let not_found_error = TrailFinderError::NotFound("Device not found".to_string());
+        assert_eq!(
+            not_found_error.to_string(),
+            "Not found error: Device not found"
+        );
+
+        let parse_error = TrailFinderError::Parse("Parse failed".to_string());
+        assert_eq!(parse_error.to_string(), "Parse error: Parse failed");
+
+        let invalid_line_error = TrailFinderError::InvalidLine("Bad line".to_string());
+        assert_eq!(invalid_line_error.to_string(), "Invalid line: Bad line");
+
+        let serde_error = TrailFinderError::Serde("JSON error".to_string());
+        assert_eq!(serde_error.to_string(), "Serde error: JSON error");
+    }
+
+    #[test]
+    fn test_trailfinder_error_from_ssh_error() {
+        let ssh_err = crate::ssh::SshError::Timeout;
+        let tf_err: TrailFinderError = ssh_err.into();
+        assert!(matches!(tf_err, TrailFinderError::Ssh(_)));
+    }
+
+    #[test]
+    fn test_trailfinder_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "File not found");
+        let tf_err: TrailFinderError = io_err.into();
+        assert!(matches!(tf_err, TrailFinderError::Io(_)));
+    }
+
+    #[test]
+    fn test_trailfinder_error_from_serde_json_error() {
+        let invalid_json = "{ invalid json";
+        let serde_err = serde_json::from_str::<serde_json::Value>(invalid_json).unwrap_err();
+        let tf_err: TrailFinderError = serde_err.into();
+        assert!(matches!(tf_err, TrailFinderError::Serde(_)));
+    }
+
+    #[test]
+    fn test_device_new() {
+        let device = Device::new(
+            "test-router".to_string(),
+            Some("Test Router".to_string()),
+            Owner::Named("Lab".to_string()),
+            DeviceType::Router,
+        );
+
+        assert_eq!(device.hostname, "test-router");
+        assert_eq!(device.name, Some("Test Router".to_string()));
+        assert!(matches!(device.owner, Owner::Named(ref name) if name == "Lab"));
+        assert_eq!(device.device_type, DeviceType::Router);
+        assert!(device.routes.is_empty());
+        assert!(device.interfaces.is_empty());
+        assert!(device.system_identity.is_none());
+        // device_id should be a valid UUID
+        assert_ne!(device.device_id, uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn test_device_display_name() {
+        let device_with_name = Device::new(
+            "router1".to_string(),
+            Some("Main Router".to_string()),
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+        assert_eq!(device_with_name.display_name(), "Main Router");
+
+        let device_without_name = Device::new(
+            "router2".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+        assert_eq!(device_without_name.display_name(), "router2");
+    }
+
+    #[test]
+    fn test_device_find_interface_by_id() {
+        let mut device = Device::new(
+            "test-device".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+        let interface_id = interface.interface_id(&device.device_id);
+        device.interfaces.push(interface);
+
+        let found = device.find_interface_by_id(&interface_id);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().name, "eth0");
+
+        let not_found = device.find_interface_by_id("nonexistent");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_device_with_routes() {
+        let device = Device::new(
+            "router".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+
+        let route = Route {
+            route_type: RouteType::Default(uuid::Uuid::new_v4()),
+            target: cidr::IpCidr::V4(Ipv4Cidr::new(Ipv4Addr::new(0, 0, 0, 0), 0).unwrap()),
+            gateway: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            distance: Some(1),
+        };
+
+        let device_with_routes = device.with_routes(vec![route]);
+        assert_eq!(device_with_routes.routes.len(), 1);
+    }
+
+    #[test]
+    fn test_device_with_interfaces() {
+        let device = Device::new(
+            "switch".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Switch,
+        );
+
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+        let device_with_interfaces = device.with_interfaces(vec![interface]);
+        assert_eq!(device_with_interfaces.interfaces.len(), 1);
+        assert_eq!(device_with_interfaces.interfaces[0].name, "eth0");
+    }
+
+    #[test]
+    fn test_device_with_system_identity() {
+        let device = Device::new(
+            "router".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+
+        let device_with_identity = device.with_system_identity(Some("System Identity".to_string()));
+        assert_eq!(
+            device_with_identity.system_identity,
+            Some("System Identity".to_string())
+        );
+
+        let device2 = Device::new(
+            "router".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+        let device_without_identity = device2.with_system_identity(None);
+        assert!(device_without_identity.system_identity.is_none());
+    }
+
+    #[test]
+    fn test_device_serialization() {
+        let device = Device::new(
+            "test-device".to_string(),
+            Some("Test Device".to_string()),
+            Owner::Named("Lab".to_string()),
+            DeviceType::Router,
+        );
+
+        let json = serde_json::to_string(&device).unwrap();
+        let deserialized: Device = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(device.device_id, deserialized.device_id);
+        assert_eq!(device.hostname, deserialized.hostname);
+        assert_eq!(device.name, deserialized.name);
+        assert_eq!(device.device_type, deserialized.device_type);
+        assert!(matches!(deserialized.owner, Owner::Named(ref name) if name == "Lab"));
+    }
+
+    #[test]
+    fn test_interface_new() {
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+
+        assert_eq!(interface.name, "eth0");
+        assert_eq!(interface.interface_type, InterfaceType::Ethernet);
+        assert!(interface.vlans.is_empty());
+        assert!(interface.addresses.is_empty());
+        assert!(interface.comment.is_none());
+        assert!(interface.mac_address.is_none());
+        assert!(interface.peers.is_empty());
+    }
+
+    #[test]
+    fn test_interface_id_generation() {
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+        let device_id = uuid::Uuid::new_v4();
+
+        let id1 = interface.interface_id(&device_id);
+        let id2 = interface.interface_id(&device_id);
+
+        // Should be deterministic for same interface and device
+        assert_eq!(id1, id2);
+
+        // Should be different for different device
+        let other_device_id = uuid::Uuid::new_v4();
+        let id3 = interface.interface_id(&other_device_id);
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_interface_with_builder_pattern() {
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            Some("Test interface".to_string()),
+        )
+        .with_mac_address(MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
+
+        assert_eq!(interface.comment, Some("Test interface".to_string()));
+        assert!(interface.mac_address.is_some());
+    }
+
+    #[test]
+    fn test_route_construction() {
+        let route_type = RouteType::Default(uuid::Uuid::new_v4());
+        let target = cidr::IpCidr::V4(Ipv4Cidr::new(Ipv4Addr::new(0, 0, 0, 0), 0).unwrap());
+        let gateway = Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+        let distance = Some(1);
+
+        let route = Route {
+            route_type: route_type.clone(),
+            target,
+            gateway,
+            distance,
+        };
+
+        assert!(matches!(route.route_type, RouteType::Default(_)));
+        assert_eq!(route.target, target);
+        assert_eq!(route.gateway, gateway);
+        assert_eq!(route.distance, distance);
+    }
+
+    #[test]
+    fn test_route_type_variants() {
+        let interface_id = uuid::Uuid::new_v4();
+
+        let local_route = RouteType::Local(interface_id);
+        assert!(matches!(local_route, RouteType::Local(_)));
+
+        let default_route = RouteType::Default(interface_id);
+        assert!(matches!(default_route, RouteType::Default(_)));
+
+        let nexthop_route = RouteType::NextHop(interface_id);
+        assert!(matches!(nexthop_route, RouteType::NextHop(_)));
+    }
+
+    #[test]
+    fn test_cidr_parsing_edge_cases() {
+        // Test various CIDR formats that should be valid
+        let ipv4_cidr = "192.168.1.0/24".parse::<cidr::Ipv4Cidr>();
+        assert!(ipv4_cidr.is_ok());
+
+        let ipv6_cidr = "2001:db8::/32".parse::<cidr::Ipv6Cidr>();
+        assert!(ipv6_cidr.is_ok());
+
+        // Test invalid CIDR formats
+        let invalid_cidr = "invalid.cidr".parse::<cidr::Ipv4Cidr>();
+        assert!(invalid_cidr.is_err());
+    }
+
+    #[test]
+    fn test_mac_address_handling() {
+        let mac = MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        )
+        .with_mac_address(mac);
+
+        assert!(interface.mac_address.is_some());
+        assert_eq!(interface.mac_address.unwrap(), mac);
+    }
+
+    #[test]
+    fn test_upstream_enum() {
+        let internet = Upstream::Internet;
+        assert!(matches!(internet, Upstream::Internet));
+
+        let gateway = Upstream::Gateway(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(matches!(gateway, Upstream::Gateway(_)));
+    }
+
+    #[test]
+    fn test_empty_device_collections() {
+        let device = Device::new(
+            "empty-device".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Router,
+        );
+
+        assert!(device.routes.is_empty());
+        assert!(device.interfaces.is_empty());
+        assert!(device.find_interface_by_id("any-id").is_none());
+    }
+
+    #[test]
+    fn test_device_with_multiple_interfaces() {
+        let device = Device::new(
+            "multi-interface".to_string(),
+            None,
+            Owner::Unknown,
+            DeviceType::Switch,
+        );
+
+        let interfaces = vec![
+            Interface::new(
+                uuid::Uuid::new_v4(),
+                "eth0".to_string(),
+                vec![],
+                vec![],
+                InterfaceType::Ethernet,
+                None,
+            ),
+            Interface::new(
+                uuid::Uuid::new_v4(),
+                "eth1".to_string(),
+                vec![],
+                vec![],
+                InterfaceType::Ethernet,
+                None,
+            ),
+            Interface::new(
+                uuid::Uuid::new_v4(),
+                "vlan100".to_string(),
+                vec![100],
+                vec![],
+                InterfaceType::Vlan,
+                None,
+            ),
+        ];
+
+        let device_with_interfaces = device.with_interfaces(interfaces);
+        assert_eq!(device_with_interfaces.interfaces.len(), 3);
+
+        // Test finding each interface
+        for interface in &device_with_interfaces.interfaces {
+            let id = interface.interface_id(&device_with_interfaces.device_id);
+            let found = device_with_interfaces.find_interface_by_id(&id);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().name, interface.name);
+        }
+    }
+
+    #[test]
+    fn test_interface_with_vlans() {
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![100, 200],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+
+        assert_eq!(interface.vlans.len(), 2);
+        assert!(interface.vlans.contains(&100));
+        assert!(interface.vlans.contains(&200));
+    }
+
+    #[test]
+    fn test_interface_with_addresses() {
+        let addr = InterfaceAddress {
+            ip: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            prefix_length: 24,
+        };
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![addr],
+            InterfaceType::Ethernet,
+            None,
+        );
+
+        assert_eq!(interface.addresses.len(), 1);
+        assert_eq!(
+            interface.addresses[0].ip,
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10))
+        );
+        assert_eq!(interface.addresses[0].prefix_length, 24);
+    }
+
+    #[test]
+    fn test_interface_peers() {
+        let mut interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        );
+
+        // Test peers
+        interface.peers.insert(
+            PeerConnection::Untagged,
+            vec![uuid::Uuid::new_v4(), uuid::Uuid::new_v4()],
+        );
+
+        assert_eq!(interface.peers.len(), 1);
+        assert!(interface.peers.contains_key(&PeerConnection::Untagged));
+        assert_eq!(interface.peers[&PeerConnection::Untagged].len(), 2);
+    }
+
+    #[test]
+    fn test_interface_serialization() {
+        let interface = Interface::new(
+            uuid::Uuid::new_v4(),
+            "eth0".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            Some("Test interface".to_string()),
+        )
+        .with_mac_address(MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
+
+        let json = serde_json::to_string(&interface).unwrap();
+        let deserialized: Interface = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(interface.name, deserialized.name);
+        assert_eq!(interface.interface_type, deserialized.interface_type);
+        assert_eq!(interface.comment, deserialized.comment);
+        assert_eq!(interface.mac_address, deserialized.mac_address);
+    }
+
+    #[test]
+    fn test_route_serialization() {
+        let route = Route {
+            route_type: RouteType::Default(uuid::Uuid::new_v4()),
+            target: cidr::IpCidr::V4(Ipv4Cidr::new(Ipv4Addr::new(0, 0, 0, 0), 0).unwrap()),
+            gateway: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
+            distance: Some(1),
+        };
+
+        let json = serde_json::to_string(&route).unwrap();
+        let deserialized: Route = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(route.target, deserialized.target);
+        assert_eq!(route.gateway, deserialized.gateway);
+        assert_eq!(route.distance, deserialized.distance);
+    }
 }

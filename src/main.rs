@@ -752,3 +752,480 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .block_on(async { main_func().await })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Helper function to create a temporary config file
+    fn create_temp_config_file(content: &str) -> NamedTempFile {
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        writeln!(temp_file, "{}", content).expect("Failed to write to temp file");
+        temp_file
+    }
+
+    // Helper function to create a basic test config
+    fn basic_test_config() -> String {
+        r#"{
+            "devices": [
+                {
+                    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "hostname": "test-router",
+                    "owner": {
+                        "Named": "Test Lab"
+                    },
+                    "ssh_username": "admin",
+                    "ssh_port": 22,
+                    "brand": "Mikrotik",
+                    "device_type": "Router"
+                }
+            ],
+            "ssh_timeout_seconds": 30,
+            "use_ssh_agent": true,
+            "state_directory": "test_states"
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn test_cli_parsing_basic_commands() {
+        // Test web command
+        let args = vec![
+            "trailfinder",
+            "web",
+            "--port",
+            "8080",
+            "--address",
+            "0.0.0.0",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Web { port, address } => {
+                assert_eq!(port, 8080);
+                assert_eq!(address, "0.0.0.0");
+            }
+            _ => panic!("Expected Web command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_identify_command() {
+        // Test identify command with all options
+        let args = vec![
+            "trailfinder",
+            "identify",
+            "router1",
+            "--username",
+            "admin",
+            "--keyfile",
+            "/path/to/key",
+            "--ip-address",
+            "192.168.1.1",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Identify {
+                hostname,
+                username,
+                keyfile,
+                ip_address,
+            } => {
+                assert_eq!(hostname, Some("router1".to_string()));
+                assert_eq!(username, Some("admin".to_string()));
+                assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(ip_address, Some("192.168.1.1".to_string()));
+            }
+            _ => panic!("Expected Identify command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_update_command() {
+        // Test update command with specific devices
+        let args = vec!["trailfinder", "update", "router1", "switch1"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Update { devices } => {
+                assert_eq!(devices, vec!["router1", "switch1"]);
+            }
+            _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_pathfind_command() {
+        // Test pathfind command with all options
+        let args = vec![
+            "trailfinder",
+            "pathfind",
+            "192.168.1.10",
+            "10.0.0.5",
+            "--source-device",
+            "router1",
+            "--source-interface",
+            "eth0",
+            "--source-vlan",
+            "100",
+            "--dest-device",
+            "router2",
+            "--dest-interface",
+            "eth1",
+            "--dest-vlan",
+            "200",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Pathfind {
+                source_ip,
+                destination_ip,
+                source_device,
+                source_interface,
+                source_vlan,
+                dest_device,
+                dest_interface,
+                dest_vlan,
+            } => {
+                assert_eq!(source_ip, "192.168.1.10");
+                assert_eq!(destination_ip, "10.0.0.5");
+                assert_eq!(source_device, Some("router1".to_string()));
+                assert_eq!(source_interface, Some("eth0".to_string()));
+                assert_eq!(source_vlan, Some(100));
+                assert_eq!(dest_device, Some("router2".to_string()));
+                assert_eq!(dest_interface, Some("eth1".to_string()));
+                assert_eq!(dest_vlan, Some(200));
+            }
+            _ => panic!("Expected Pathfind command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_global_options() {
+        // Test global options
+        let args = vec!["trailfinder", "--debug", "--config", "custom.json", "web"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        assert!(cli.debug);
+        assert_eq!(cli.config_path, "custom.json");
+    }
+
+    #[test]
+    fn test_cli_parsing_default_command() {
+        // Test that identify is the default command when no command is specified
+        let args = vec!["trailfinder"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        // The command should be None, which gets converted to default Identify in main_func
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn test_path_endpoint_creation_from_cli() {
+        // Test PathEndpoint creation from CLI arguments (as done in pathfind command)
+        let source = PathEndpoint {
+            device: None,
+            device_id: Some("router1".to_string()),
+            interface: Some("eth0".to_string()),
+            ip: Some("192.168.1.10".to_string()),
+            vlan: Some(100),
+        };
+
+        assert_eq!(source.device_id, Some("router1".to_string()));
+        assert_eq!(source.interface, Some("eth0".to_string()));
+        assert_eq!(source.ip, Some("192.168.1.10".to_string()));
+        assert_eq!(source.vlan, Some(100));
+    }
+
+    #[tokio::test]
+    async fn test_config_file_loading_existing() {
+        let config_content = basic_test_config();
+        let temp_file = create_temp_config_file(&config_content);
+        let config_path = temp_file.path().to_str().unwrap();
+
+        // Test loading existing config
+        let result = AppConfig::load_from_file(config_path);
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert_eq!(config.devices.len(), 1);
+        assert_eq!(config.devices[0].hostname, "test-router");
+    }
+
+    #[tokio::test]
+    async fn test_config_file_creation_nonexistent() {
+        // Test config creation when file doesn't exist
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let config_path = temp_file.path().to_str().unwrap();
+
+        // Remove the file so it doesn't exist
+        std::fs::remove_file(config_path).expect("Failed to remove temp file");
+
+        // This should create a default config
+        let result = AppConfig::load_from_file(config_path);
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert_eq!(config.devices.len(), 0); // Default config has no devices
+
+        // File should now exist
+        assert!(std::path::Path::new(config_path).exists());
+    }
+
+    #[tokio::test]
+    async fn test_config_file_loading_invalid_json() {
+        let invalid_json = "{ invalid json content";
+        let temp_file = create_temp_config_file(invalid_json);
+        let config_path = temp_file.path().to_str().unwrap();
+
+        // This should return an error for invalid JSON
+        let result = AppConfig::load_from_file(config_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_print_path_result_formatting() {
+        // Test the path result printing function
+        use trailfinder::pathfind::{PathFindResult, PathHop};
+
+        let hops = vec![
+            PathHop {
+                device: "Source: 192.168.1.10".to_string(),
+                incoming_interface: None,
+                incoming_vlan: None,
+                outgoing_interface: "-".to_string(),
+                outgoing_vlan: None,
+                gateway: None,
+                network: "-".to_string(),
+                source_ip: Some("192.168.1.10".to_string()),
+            },
+            PathHop {
+                device: "router1".to_string(),
+                incoming_interface: Some("eth0".to_string()),
+                incoming_vlan: Some(100),
+                outgoing_interface: "eth1".to_string(),
+                outgoing_vlan: Some(200),
+                gateway: Some("192.168.1.1".to_string()),
+                network: "0.0.0.0/0".to_string(),
+                source_ip: None,
+            },
+        ];
+
+        let result = PathFindResult {
+            path: hops,
+            total_hops: 2,
+            success: true,
+            error: None,
+        };
+
+        // This should not panic and should format correctly
+        // We can't easily test the output without capturing stdout,
+        // but we can at least verify the function doesn't crash
+        print_path_result(&result);
+    }
+
+    #[test]
+    fn test_calculate_column_widths() {
+        use trailfinder::pathfind::PathHop;
+
+        let hops = vec![PathHop {
+            device: "Very Long Device Name That Should Affect Width".to_string(),
+            incoming_interface: Some("GigabitEthernet0/0/1".to_string()),
+            incoming_vlan: Some(1234),
+            outgoing_interface: "TenGigabitEthernet1/1/1".to_string(),
+            outgoing_vlan: Some(4094),
+            gateway: Some("192.168.100.254".to_string()),
+            network: "172.16.255.0/24".to_string(),
+            source_ip: None,
+        }];
+
+        // Test that width calculation handles long strings correctly
+        let device_width = hops
+            .iter()
+            .map(|hop| hop.device.len())
+            .max()
+            .unwrap_or(6)
+            .max(6);
+
+        assert!(device_width >= "Very Long Device Name That Should Affect Width".len());
+
+        let incoming_width = hops
+            .iter()
+            .map(|hop| hop.incoming_interface.as_deref().unwrap_or("-").len())
+            .max()
+            .unwrap_or(8)
+            .max(8);
+
+        assert!(incoming_width >= "GigabitEthernet0/0/1".len());
+    }
+
+    #[test]
+    fn test_ip_address_parsing() {
+        // Test valid IP addresses
+        let valid_ips = vec![
+            "192.168.1.1",
+            "10.0.0.1",
+            "172.16.0.1",
+            "127.0.0.1",
+            "::1",
+            "2001:db8::1",
+        ];
+
+        for ip_str in valid_ips {
+            let result = ip_str.parse::<IpAddr>();
+            assert!(result.is_ok(), "Failed to parse valid IP: {}", ip_str);
+        }
+
+        // Test invalid IP addresses
+        let invalid_ips = vec![
+            "256.256.256.256",
+            "not.an.ip",
+            "192.168.1",
+            "192.168.1.1.1",
+            "",
+        ];
+
+        for ip_str in invalid_ips {
+            let result = ip_str.parse::<IpAddr>();
+            assert!(
+                result.is_err(),
+                "Should have failed to parse invalid IP: {}",
+                ip_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_socket_addr_creation() {
+        // Test socket address creation from hostname and port
+        let ip: IpAddr = "192.168.1.1".parse().unwrap();
+        let port = 22;
+        let socket_addr = SocketAddr::new(ip, port);
+
+        assert_eq!(socket_addr.ip(), ip);
+        assert_eq!(socket_addr.port(), port);
+    }
+
+    // Mock tests for command functions (these test the structure without external dependencies)
+
+    #[tokio::test]
+    async fn test_pathfind_command_structure() {
+        // Test that pathfind command creates proper PathEndpoint structures
+        let source = PathEndpoint {
+            device: None,
+            device_id: Some("source-device".to_string()),
+            interface: Some("eth0".to_string()),
+            ip: Some("192.168.1.10".to_string()),
+            vlan: Some(100),
+        };
+
+        let destination = PathEndpoint {
+            device: None,
+            device_id: Some("dest-device".to_string()),
+            interface: Some("eth1".to_string()),
+            ip: Some("10.0.0.1".to_string()),
+            vlan: Some(200),
+        };
+
+        let request = PathFindRequest {
+            source,
+            destination,
+        };
+
+        // Verify request structure
+        assert_eq!(request.source.device_id, Some("source-device".to_string()));
+        assert_eq!(
+            request.destination.device_id,
+            Some("dest-device".to_string())
+        );
+        assert_eq!(request.source.ip, Some("192.168.1.10".to_string()));
+        assert_eq!(request.destination.ip, Some("10.0.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_device_config_defaults() {
+        let mut device_config = DeviceConfig::default();
+        device_config.hostname = "test-device".to_string();
+
+        assert_eq!(device_config.hostname, "test-device");
+        assert!(device_config.ip_address.is_none());
+        assert!(device_config.ssh_username.is_none());
+        assert_eq!(device_config.ssh_port.get(), 22);
+    }
+
+    #[test]
+    fn test_cli_help_generation() {
+        // Test that help can be generated without panicking
+        let _cli = Cli::parse_from(vec!["trailfinder", "--help"]);
+        // This test mainly ensures the CLI structure is valid for help generation
+        // The actual help text generation is tested by clap internally
+    }
+
+    #[test]
+    fn test_cli_version_flag() {
+        // Test version flag parsing
+        let result = Cli::try_parse_from(vec!["trailfinder", "--version"]);
+        // Version flag causes early exit, so this would be an "error" in try_parse_from
+        // but it's the expected behavior
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_commands_enum_variants() {
+        // Test that all command variants can be constructed
+        let web_cmd = Commands::Web {
+            port: 8000,
+            address: "127.0.0.1".to_string(),
+        };
+        match web_cmd {
+            Commands::Web { port, address } => {
+                assert_eq!(port, 8000);
+                assert_eq!(address, "127.0.0.1");
+            }
+            _ => panic!("Unexpected command variant"),
+        }
+
+        let identify_cmd = Commands::Identify {
+            hostname: Some("router1".to_string()),
+            username: None,
+            keyfile: None,
+            ip_address: None,
+        };
+        match identify_cmd {
+            Commands::Identify { hostname, .. } => {
+                assert_eq!(hostname, Some("router1".to_string()));
+            }
+            _ => panic!("Unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn test_error_display_formatting() {
+        use trailfinder::TrailFinderError;
+
+        let error = TrailFinderError::NotFound("Device not found".to_string());
+        let error_string = format!("{}", error);
+        assert!(error_string.contains("Device not found"));
+
+        let parse_error = TrailFinderError::Parse("Parse failed".to_string());
+        let parse_string = format!("{}", parse_error);
+        assert!(parse_string.contains("Parse failed"));
+    }
+}

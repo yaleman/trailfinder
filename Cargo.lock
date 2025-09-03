@@ -5559,6 +5559,7 @@ dependencies = [
  "serde_with",
  "shellexpand",
  "ssh-agent",
+ "tempfile",
  "terminator-rs",
  "thirtyfour",
  "tokio",
