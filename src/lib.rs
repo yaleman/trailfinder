@@ -10,6 +10,7 @@ use crate::ssh::SshError;
 
 pub mod brand;
 pub mod config;
+pub mod pathfind;
 pub mod ssh;
 #[cfg(test)]
 mod tests;
