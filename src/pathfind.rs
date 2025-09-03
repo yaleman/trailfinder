@@ -346,27 +346,25 @@ fn validate_destination_endpoint(
                 )
             })?;
         // Validate VLAN if specified
-        if let Some(dest_vlan) = destination.vlan {
-            if !interface.vlans.contains(&dest_vlan) {
-                return Err(format!(
-                    "VLAN {} not configured on destination interface '{}' of device '{}'",
-                    dest_vlan, dest_interface_name, device.hostname
-                ));
-            }
+        if let Some(dest_vlan) = destination.vlan
+            && !interface.vlans.contains(&dest_vlan)
+        {
+            return Err(format!(
+                "VLAN {} not configured on destination interface '{}' of device '{}'",
+                dest_vlan, dest_interface_name, device.hostname
+            ));
         }
         // Check if destination network is reachable through this interface
-        if let Some(ip_part) = dest_network.to_string().split('/').next() {
-            if let Ok(dest_ip) = ip_part.parse::<IpAddr>() {
-                if !interface
-                    .can_route(&dest_ip)
-                    .map_err(|err| format!("Failed to parse network address: {:?}", err))?
-                {
-                    warn!(
-                        "Destination IP '{}' may not be directly reachable on interface '{}' of device '{}'",
-                        dest_ip, dest_interface_name, device.hostname
-                    );
-                }
-            }
+        if let Some(ip_part) = dest_network.to_string().split('/').next()
+            && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+            && !interface
+                .can_route(&dest_ip)
+                .map_err(|err| format!("Failed to parse network address: {:?}", err))?
+        {
+            warn!(
+                "Destination IP '{}' may not be directly reachable on interface '{}' of device '{}'",
+                dest_ip, dest_interface_name, device.hostname
+            );
         }
     }
     Ok(())
@@ -396,12 +394,11 @@ fn find_best_route<'a>(
                 return true;
             }
             // Extract IP and check if contained in route
-            if let Some(ip_part) = dest_str.split('/').next() {
-                if let Ok(dest_ip) = ip_part.parse::<IpAddr>() {
-                    if route.target.contains(&dest_ip) {
-                        return true;
-                    }
-                }
+            if let Some(ip_part) = dest_str.split('/').next()
+                && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+                && route.target.contains(&dest_ip)
+            {
+                return true;
             }
             // Check for default routes
             let route_target_str = route.target.to_string();
