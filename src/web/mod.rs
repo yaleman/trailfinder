@@ -661,10 +661,12 @@ async fn perform_pathfind(
         device_states
             .iter()
             .find(|ds| {
-                ds.device
-                    .interfaces
-                    .iter()
-                    .any(|iface| iface.addresses.iter().any(|addr| addr.ip == source_ip))
+                ds.device.interfaces.iter().any(|iface| {
+                    iface
+                        .addresses
+                        .iter()
+                        .any(|addr| addr.can_route(&source_ip).unwrap_or(false))
+                })
             })
             .ok_or("No device found with the specified source IP")?
     } else {
@@ -693,11 +695,13 @@ async fn perform_pathfind(
             ))?;
 
         // Check if the source IP exists on this interface
-        let ip_on_interface = interface.addresses.iter().any(|addr| addr.ip == source_ip);
 
-        if !ip_on_interface {
+        if !interface
+            .can_route(&source_ip)
+            .map_err(|err| format!("Failed to parse network address: {:?}", err))?
+        {
             return Err(format!(
-                "Source IP '{}' is not configured on interface '{}' of device '{}'",
+                "Source IP '{}' is not routable on interface '{}' of device '{}'",
                 source_ip, source_interface_name, source_device.device.hostname
             ));
         }

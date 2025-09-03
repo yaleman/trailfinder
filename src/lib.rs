@@ -237,9 +237,9 @@ impl InterfaceAddress {
                 let network_u32 = ip_u32 & mask;
                 let network_ip = std::net::Ipv4Addr::from(network_u32);
                 cidr::Ipv4Cidr::new(network_ip, self.prefix_length).map(cidr::IpCidr::V4)
-            },
+            }
             IpAddr::V6(ipv6) => {
-                // For IPv6, calculate the network address  
+                // For IPv6, calculate the network address
                 let ip_u128 = u128::from(ipv6);
                 let mask = !((1u128 << (128 - self.prefix_length)) - 1);
                 let network_u128 = ip_u128 & mask;
@@ -247,6 +247,23 @@ impl InterfaceAddress {
                 cidr::Ipv6Cidr::new(network_ip, self.prefix_length).map(cidr::IpCidr::V6)
             }
         }
+    }
+
+    pub fn can_route(&self, source: &IpAddr) -> Result<bool, cidr::errors::NetworkParseError> {
+        if self.ip == *source {
+            return Ok(true);
+        } else if self.ip.is_ipv4() && source.is_ipv4() {
+            // For IPv4, also check if the IP is in the same subnet
+            if let Ok(subnet) = self.to_cidr() {
+                return Ok(subnet.contains(source));
+            }
+        } else if self.ip.is_ipv6() && source.is_ipv6() {
+            // For IPv6, also check if the IP is in the same subnet
+            if let Ok(subnet) = self.to_cidr() {
+                return Ok(subnet.contains(source));
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -350,6 +367,15 @@ impl Interface {
 
     pub fn interface_id(&self, device_id: &uuid::Uuid) -> String {
         format!("{}:{}:{}", device_id, self.name, self.interface_type)
+    }
+
+    pub fn can_route(&self, source_ip: &IpAddr) -> Result<bool, NetworkParseError> {
+        for addr in &self.addresses {
+            if addr.can_route(source_ip)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
