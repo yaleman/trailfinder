@@ -1,6 +1,6 @@
 /target
 states/
 devices.json
-tarpaulin-report.html
+tarpaulin-report.*
 openapi.json
 .playwright-mcp/
