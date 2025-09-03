@@ -12,6 +12,7 @@ Trailfinder is a Rust application for network device discovery and configuration
 
 - `cargo build --quiet` - Build the project
 - `cargo run --quiet` - Run the main application
+- `cargo run web --quiet` - Run the web server
 
 ### Testing
 
@@ -21,23 +22,18 @@ Trailfinder is a Rust application for network device discovery and configuration
 ### Development
 
 - `cargo check --quiet` - Fast compile check without producing binaries
-- `cargo clippy` - Lint checker
+- `cargo clippy --all-targets --quiet` - Lint checker
 - `cargo fmt` - Format code
 
 ### Logging
 
-The application uses structured logging via the `tracing` crate. Log levels can be controlled with the `RUST_LOG` environment variable:
-
-- `RUST_LOG=error` - Only show errors (minimal output)
-- `RUST_LOG=info` - Show informational messages (default, recommended for normal use)
-- `RUST_LOG=debug` - Show detailed debugging information including SSH authentication attempts
-- `RUST_LOG=trace` - Show maximum verbosity (not currently used)
+The application uses structured logging via the `tracing` crate.
 
 Examples:
 
 - `cargo run` - Run with default INFO level logging
 - `cargo run -- --debug` - Run with detailed debugging
-- `cargo run` - Run release build with minimal output
+- `cargo run --release` - Run release build with minimal output
 
 ## Architecture
 
@@ -63,8 +59,7 @@ The codebase follows a standard Rust library + binary structure:
   - SSH config integration - reads `~/.ssh/config` for connection details
 
 - **src/brand/mikrotik.rs** - MikroTik-specific parser implementing `ConfParser`
-
-- **Test data files** - Sample MikroTik configuration data for testing
+- **src/brand/cisco.rs** - Cisco-specific parser implementing `ConfParser`
 
 ## Device Configuration
 
@@ -105,7 +100,7 @@ The application tries SSH config first, then falls back to manual config if SSH 
 
 ## Testing Data
 
-The project includes sample MikroTik configuration files that are used in tests. The parser functions expect MikroTik's specific command output format for interfaces and routes.
+The project includes sample MikroTik and Cisco system responses in files that are used in tests.
 
 ## Current Development Tasks
 
@@ -115,6 +110,7 @@ See TODO.md for the current development plan and task status.
 - when editing Cargo.toml always try to use cargo commands unless it's impossible
 - clean up TODO.md when commiting checked-off tasks
 - update TODO.md with tasks before and after they're done
-- if wanting to test the app, just use cargo run rather than cargo build then running the binary
-- always use a todo list when working on complex tasks to track progress and remain on track
-- don't ever use .innerHTML  to update content of a tag in javascript
+- always use a todo list in TODO.md when working on complex tasks to track progress and remain on track
+- if wanting to test the app, just use `cargo run` rather than `cargo build` then running the binary
+- when using javscript you MUST use  DOM manipulation to update UI objects, NEVER use .innerHTML or similar.
+- never try to use port 3000 to try and run the server, use a high port for testing

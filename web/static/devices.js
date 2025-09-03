@@ -15,42 +15,15 @@ function initializeEventListeners() {
     // Device filter
     document.getElementById('device-filter').addEventListener('input', filterDevices);
 
-    // Modal close
-    document.querySelector('.close').addEventListener('click', closeModal);
-    window.addEventListener('click', (event) => {
-        const modal = document.getElementById('device-modal');
-        if (event.target === modal) {
-            closeModal();
-        }
-    });
+    // Initialize modal event listeners from common.js
+    initializeModalEventListeners();
 }
 
-// API Functions
-async function apiCall(endpoint, options = {}) {
-    try {
-        const response = await fetch(`/api${endpoint}`, {
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            ...options
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        return await response.json();
-    } catch (error) {
-        console.error("API call failed", endpoint, error);
-        showError(`Failed to load data from ${endpoint}`);
-        return null;
-    }
-}
+// API Functions are now in common.js
 
 // Device Management
 async function loadDevices() {
-    const devicesList = document.getElementById('devices-list');
-    devicesList.innerHTML = '<div class="loading">Loading devices...</div>';
+    createLoadingDiv('Loading devices...', 'devices-list');
 
     devicesData = await apiCall('/devices');
     if (devicesData) {
@@ -60,27 +33,66 @@ async function loadDevices() {
 
 function renderDevices(devices) {
     const devicesList = document.getElementById('devices-list');
+    devicesList.textContent = '';
 
     if (!devices || devices.length === 0) {
-        devicesList.innerHTML = '<div class="no-data">No devices found</div>';
+        const noDataDiv = document.createElement('div');
+        noDataDiv.className = 'no-data';
+        noDataDiv.textContent = 'No devices found';
+        devicesList.appendChild(noDataDiv);
         return;
     }
 
-    const devicesHTML = devices.map(device => `
-        <div class="device-card" onclick="showDeviceDetails('${device.device_id}')">
-            <h3>${device.hostname}</h3>
-            ${device.name ? `<p class="device-name">${device.name}</p>` : ''}
-            <div class="device-type ${(device.device_type || 'unknown').toLowerCase()}">${device.device_type || 'Unknown'}</div>
-            <ul class="device-stats">
-                <li>📡 ${device.interface_count} interfaces</li>
-                <li>🛣️ ${device.route_count} routes</li>
-            </ul>
-            ${device.brand ? `<div class="device-brand">${device.brand}</div>` : ''}
-            ${device.last_seen ? `<div class="device-last-seen">Last seen: ${formatDate(device.last_seen)}</div>` : ''}
-        </div>
-    `).join('');
-
-    devicesList.innerHTML = devicesHTML;
+    devices.forEach(device => {
+        const deviceCard = document.createElement('div');
+        deviceCard.className = 'device-card';
+        deviceCard.onclick = () => showDeviceDetails(device.device_id);
+        
+        const hostname = document.createElement('h3');
+        hostname.textContent = device.hostname;
+        deviceCard.appendChild(hostname);
+        
+        if (device.name) {
+            const deviceName = document.createElement('p');
+            deviceName.className = 'device-name';
+            deviceName.textContent = device.name;
+            deviceCard.appendChild(deviceName);
+        }
+        
+        const deviceType = document.createElement('div');
+        deviceType.className = `device-type ${(device.device_type || 'unknown').toLowerCase()}`;
+        deviceType.textContent = device.device_type || 'Unknown';
+        deviceCard.appendChild(deviceType);
+        
+        const statsList = document.createElement('ul');
+        statsList.className = 'device-stats';
+        
+        const interfacesStat = document.createElement('li');
+        interfacesStat.textContent = `📡 ${device.interface_count} interfaces`;
+        statsList.appendChild(interfacesStat);
+        
+        const routesStat = document.createElement('li');
+        routesStat.textContent = `🛣️ ${device.route_count} routes`;
+        statsList.appendChild(routesStat);
+        
+        deviceCard.appendChild(statsList);
+        
+        if (device.brand) {
+            const deviceBrand = document.createElement('div');
+            deviceBrand.className = 'device-brand';
+            deviceBrand.textContent = device.brand;
+            deviceCard.appendChild(deviceBrand);
+        }
+        
+        if (device.last_seen) {
+            const lastSeen = document.createElement('div');
+            lastSeen.className = 'device-last-seen';
+            lastSeen.textContent = `Last seen: ${formatDate(device.last_seen)}`;
+            deviceCard.appendChild(lastSeen);
+        }
+        
+        devicesList.appendChild(deviceCard);
+    });
 }
 
 function filterDevices() {
@@ -94,271 +106,6 @@ function filterDevices() {
     renderDevices(filteredDevices);
 }
 
-// Device Details Modal
-async function showDeviceDetails(deviceId) {
-    const modal = document.getElementById('device-modal');
-    const content = document.getElementById('device-detail-content');
+// Device Details Modal is now handled by common.js showDeviceDetails function
 
-    content.innerHTML = '<div class="loading">Loading device details...</div>';
-    modal.style.display = 'block';
-
-    const deviceDetail = await apiCall(`/devices/${deviceId}`);
-    if (deviceDetail) {
-        renderDeviceDetails(deviceDetail);
-    }
-}
-
-function renderDeviceDetails(device) {
-    const content = document.getElementById('device-detail-content');
-
-    // Clear existing content
-    content.textContent = '';
-
-    // Create main container
-    const deviceDetailDiv = document.createElement('div');
-    deviceDetailDiv.className = 'device-detail';
-
-    // Device header
-    const hostname = document.createElement('h2');
-    hostname.textContent = device.hostname;
-    deviceDetailDiv.appendChild(hostname);
-
-    // Device name (optional)
-    if (device.name) {
-        const nameP = document.createElement('p');
-        const nameStrong = document.createElement('strong');
-        nameStrong.textContent = 'Name: ';
-        nameP.appendChild(nameStrong);
-        nameP.appendChild(document.createTextNode(device.name));
-        deviceDetailDiv.appendChild(nameP);
-    }
-
-    // Device ID
-    const deviceIdP = document.createElement('p');
-    const deviceIdStrong = document.createElement('strong');
-    deviceIdStrong.textContent = 'Device ID: ';
-    deviceIdP.appendChild(deviceIdStrong);
-    deviceIdP.appendChild(document.createTextNode(device.device_id));
-    deviceDetailDiv.appendChild(deviceIdP);
-
-    // Device Type
-    const deviceTypeP = document.createElement('p');
-    const deviceTypeStrong = document.createElement('strong');
-    deviceTypeStrong.textContent = 'Type: ';
-    deviceTypeP.appendChild(deviceTypeStrong);
-    deviceTypeP.appendChild(document.createTextNode(device.device_type));
-    deviceDetailDiv.appendChild(deviceTypeP);
-
-    // Owner
-    const ownerP = document.createElement('p');
-    const ownerStrong = document.createElement('strong');
-    ownerStrong.textContent = 'Owner: ';
-    ownerP.appendChild(ownerStrong);
-    const ownerText = typeof device.owner === 'object' ? device.owner.Named || 'Unknown' : device.owner;
-    ownerP.appendChild(document.createTextNode(ownerText));
-    deviceDetailDiv.appendChild(ownerP);
-
-    // Interfaces section
-    const interfacesSection = createInterfacesSection(device.interfaces);
-    deviceDetailDiv.appendChild(interfacesSection);
-
-    // Routes section
-    const routesSection = createRoutesSection(device.routes);
-    deviceDetailDiv.appendChild(routesSection);
-
-    content.appendChild(deviceDetailDiv);
-}
-
-function closeModal() {
-    document.getElementById('device-modal').style.display = 'none';
-}
-
-// Helper functions for DOM creation
-function createInterfacesSection(interfaces) {
-    const section = document.createElement('div');
-    section.className = 'detail-section';
-
-    const heading = document.createElement('h3');
-    heading.textContent = `Interfaces (${interfaces.length})`;
-    section.appendChild(heading);
-
-    const table = document.createElement('table');
-    table.className = 'interfaces-table';
-
-    // Create header
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    const headers = ['Name', 'Type', 'VLAN', 'IP Addresses', 'Comment'];
-    headers.forEach(headerText => {
-        const th = document.createElement('th');
-        th.textContent = headerText;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
-
-    // Create body
-    const tbody = document.createElement('tbody');
-    interfaces.forEach(iface => {
-        const row = document.createElement('tr');
-
-        // Name
-        const nameCell = document.createElement('td');
-        nameCell.textContent = iface.name;
-        row.appendChild(nameCell);
-
-        // Type
-        const typeCell = document.createElement('td');
-        const typeSpan = document.createElement('span');
-        const interfaceType = getInterfaceTypeDisplay(iface.interface_type);
-        const interfaceClass = getInterfaceTypeClass(iface.interface_type);
-        typeSpan.className = `interface-type ${interfaceClass}`;
-        typeSpan.textContent = interfaceType;
-        typeCell.appendChild(typeSpan);
-        row.appendChild(typeCell);
-
-        // VLAN
-        const vlanCell = document.createElement('td');
-        const vlansDisplay = iface.vlans && iface.vlans.length > 0 ? iface.vlans.join(', ') : 'N/A';
-        vlanCell.textContent = vlansDisplay;
-        row.appendChild(vlanCell);
-
-        // IP Addresses
-        const addressesCell = document.createElement('td');
-        const addressesDisplay = iface.addresses.length > 0
-            ? iface.addresses.map(addr => `${addr.ip}/${addr.prefix_length}`).join(', ')
-            : 'None';
-        addressesCell.textContent = addressesDisplay;
-        row.appendChild(addressesCell);
-
-        // Comment
-        const commentCell = document.createElement('td');
-        commentCell.textContent = iface.comment || '';
-        row.appendChild(commentCell);
-
-        tbody.appendChild(row);
-    });
-    table.appendChild(tbody);
-    section.appendChild(table);
-
-    return section;
-}
-
-function createRoutesSection(routes) {
-    const section = document.createElement('div');
-    section.className = 'detail-section';
-
-    const heading = document.createElement('h3');
-    heading.textContent = `Routes (${routes.length})`;
-    section.appendChild(heading);
-
-    const table = document.createElement('table');
-    table.className = 'routes-table';
-
-    // Create header
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    const headers = ['Target', 'Type', 'Gateway', 'Distance'];
-    headers.forEach(headerText => {
-        const th = document.createElement('th');
-        th.textContent = headerText;
-        headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
-
-    // Create body
-    const tbody = document.createElement('tbody');
-    routes.forEach(route => {
-        const row = document.createElement('tr');
-
-        // Target
-        const targetCell = document.createElement('td');
-        targetCell.textContent = route.target;
-        row.appendChild(targetCell);
-
-        // Type
-        const typeCell = document.createElement('td');
-        const typeSpan = document.createElement('span');
-        typeSpan.className = `route-type ${getRouteTypeClass(route.route_type)}`;
-        typeSpan.textContent = getRouteTypeDisplay(route.route_type);
-        typeCell.appendChild(typeSpan);
-        row.appendChild(typeCell);
-
-        // Gateway
-        const gatewayCell = document.createElement('td');
-        gatewayCell.textContent = route.gateway || 'N/A';
-        row.appendChild(gatewayCell);
-
-        // Distance
-        const distanceCell = document.createElement('td');
-        distanceCell.textContent = route.distance || 'N/A';
-        row.appendChild(distanceCell);
-
-        tbody.appendChild(row);
-    });
-    table.appendChild(tbody);
-    section.appendChild(table);
-
-    return section;
-}
-
-// Utility Functions
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleString();
-}
-
-function getRouteTypeClass(routeType) {
-    if (typeof routeType === 'object') {
-        const type = Object.keys(routeType)[0];
-        return type.toLowerCase();
-    }
-    return routeType.toLowerCase();
-}
-
-function getRouteTypeDisplay(routeType) {
-    if (typeof routeType === 'object') {
-        const type = Object.keys(routeType)[0];
-        return type;
-    }
-    return routeType;
-}
-
-function getInterfaceTypeDisplay(interfaceType) {
-    if (typeof interfaceType === 'object') {
-        // Handle {"Other": "wg"} format
-        const type = Object.keys(interfaceType)[0];
-        const value = interfaceType[type];
-        return type === 'Other' ? value : type;
-    }
-    return interfaceType;
-}
-
-function getInterfaceTypeClass(interfaceType) {
-    if (typeof interfaceType === 'object') {
-        const type = Object.keys(interfaceType)[0];
-        return type.toLowerCase();
-    }
-    return interfaceType.toLowerCase();
-}
-
-function showError(message) {
-    // Create a simple error notification
-    const error = document.createElement('div');
-    error.style.position = 'fixed';
-    error.style.top = '20px';
-    error.style.right = '20px';
-    error.style.background = '#e74c3c';
-    error.style.color = 'white';
-    error.style.padding = '1rem';
-    error.style.borderRadius = '8px';
-    error.style.zIndex = '9999';
-    error.textContent = message;
-
-    document.body.appendChild(error);
-
-    setTimeout(() => {
-        document.body.removeChild(error);
-    }, 5000);
-}
+// All utility functions are now in common.js

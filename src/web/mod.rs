@@ -203,10 +203,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/networks", get(list_networks))
         .route("/api/pathfind", post(find_path))
         // API Documentation routes
-        .merge(
-            SwaggerUi::new("/api-docs")
-                .url("/api-docs/openapi.json", ApiDoc::openapi())
-        )
+        .merge(SwaggerUi::new("/api-docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         // Static assets
         .nest_service("/static", ServeDir::new("web/static"))
         .layer(tracelayer)
@@ -676,6 +673,36 @@ async fn perform_pathfind(
         );
     };
 
+    // Validate source interface and IP consistency if both are specified
+    if let (Some(source_interface_name), Some(source_ip_str)) =
+        (&request.source.interface, &request.source.ip)
+    {
+        let source_ip: IpAddr = source_ip_str
+            .parse()
+            .map_err(|e| format!("Invalid source IP: {}", e))?;
+
+        // Find the specified interface on the source device
+        let interface = source_device
+            .device
+            .interfaces
+            .iter()
+            .find(|iface| iface.name == *source_interface_name)
+            .ok_or(format!(
+                "Interface '{}' not found on device '{}'",
+                source_interface_name, source_device.device.hostname
+            ))?;
+
+        // Check if the source IP exists on this interface
+        let ip_on_interface = interface.addresses.iter().any(|addr| addr.ip == source_ip);
+
+        if !ip_on_interface {
+            return Err(format!(
+                "Source IP '{}' is not configured on interface '{}' of device '{}'",
+                source_ip, source_interface_name, source_device.device.hostname
+            ));
+        }
+    }
+
     // Simple pathfinding: look for routes to the destination
     let mut path = Vec::new();
     let mut current_device = source_device;
@@ -692,24 +719,75 @@ async fn perform_pathfind(
         visited_devices.insert(current_device.device.hostname.clone());
 
         // Look for a matching route in current device
-        let matching_route = current_device.device.routes.iter().find(|route| {
-            // Check if destination matches exactly
-            if dest_network == route.target {
-                return true;
-            }
+        // First determine if we're looking for IPv4 or IPv6 routes
+        let dest_str = dest_network.to_string();
+        let is_ipv4_destination = if let Some(ip_part) = dest_str.split('/').next()
+            && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+        {
+            dest_ip.is_ipv4()
+        } else {
+            true // Default to IPv4 if we can't determine
+        };
 
-            // Extract IP from CIDR notation and check if it's contained in the route
-            let dest_str = dest_network.to_string();
-            if let Some(ip_part) = dest_str.split('/').next()
-                && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
-                && route.target.contains(&dest_ip)
-            {
-                return true;
-            }
+        // Find the best matching route, prioritizing:
+        // 1. Exact matches
+        // 2. Contained in route target
+        // 3. Default routes matching the IP version
+        // 4. Default routes of any version as fallback
+        let matching_route = current_device
+            .device
+            .routes
+            .iter()
+            .filter(|route| {
+                // Check if destination matches exactly
+                if dest_network == route.target {
+                    return true;
+                }
 
-            // Check for default routes (0.0.0.0/0 or ::/0)
-            route.target.to_string() == "0.0.0.0/0" || route.target.to_string() == "::/0"
-        });
+                // Extract IP from CIDR notation and check if it's contained in the route
+                if let Some(ip_part) = dest_str.split('/').next()
+                    && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+                    && route.target.contains(&dest_ip)
+                {
+                    return true;
+                }
+
+                // Check for default routes
+                let route_target_str = route.target.to_string();
+                route_target_str == "0.0.0.0/0" || route_target_str == "::/0"
+            })
+            .min_by_key(|route| {
+                // Prioritize routes by preference score (lower is better)
+                let route_target_str = route.target.to_string();
+
+                // Exact match gets highest priority
+                if dest_network == route.target {
+                    return 0;
+                }
+
+                // Routes that contain the destination IP get second priority
+                if let Some(ip_part) = dest_str.split('/').next()
+                    && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+                    && route.target.contains(&dest_ip)
+                {
+                    return 1;
+                }
+
+                // Default routes matching IP version get third priority
+                if (is_ipv4_destination && route_target_str == "0.0.0.0/0")
+                    || (!is_ipv4_destination && route_target_str == "::/0")
+                {
+                    return 2;
+                }
+
+                // Default routes of other IP version get lowest priority
+                if route_target_str == "0.0.0.0/0" || route_target_str == "::/0" {
+                    return 3;
+                }
+
+                // Should not reach here due to filter
+                4
+            });
 
         let route = match matching_route {
             Some(r) => r,
@@ -722,13 +800,68 @@ async fn perform_pathfind(
         };
 
         // Determine the exit interface for this route
+        let route_interface_id = route.interface_id();
+        debug!("Looking for interface with ID: {}", route_interface_id);
+
         let exit_interface = current_device
             .device
             .interfaces
             .iter()
-            .find(|iface| iface.interface_id == route.interface_id())
-            .map(|iface| iface.name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
+            .find(|iface| {
+                debug!("Checking interface {} with ID {}", iface.name, iface.interface_id);
+                iface.interface_id == route_interface_id
+            })
+            .map(|iface| {
+                debug!("Found interface by ID: {}", iface.name);
+                iface.name.clone()
+            })
+            .or_else(|| {
+                debug!("Interface ID not found, trying gateway subnet matching");
+                // If we can't find the interface by ID, try to find it by analyzing the gateway
+                if let Some(gateway_ip) = route.gateway {
+                    debug!("Trying to find interface for gateway: {}", gateway_ip);
+                    // Find interface that can reach this gateway (same subnet)
+                    current_device
+                        .device
+                        .interfaces
+                        .iter()
+                        .find(|iface| {
+                            let found = iface.addresses.iter().any(|addr| {
+                                // Check if gateway is in the same subnet as this interface
+                                if let Ok(subnet) = addr.to_cidr() {
+                                    let contains = subnet.contains(&gateway_ip);
+                                    debug!(
+                                        "Checking interface {} address {} (subnet: {}) contains gateway {}: {}",
+                                        iface.name, addr, subnet, gateway_ip, contains
+                                    );
+                                    contains
+                                } else {
+                                    debug!(
+                                        "Failed to convert interface {} address {} to CIDR",
+                                        iface.name, addr
+                                    );
+                                    false
+                                }
+                            });
+                            if found {
+                                debug!("Found matching interface: {}", iface.name);
+                            }
+                            found
+                        })
+                        .map(|iface| {
+                            debug!("Using interface from gateway subnet match: {}", iface.name);
+                            iface.name.clone()
+                        })
+                } else {
+                    debug!("No gateway IP available for route matching");
+                    // For routes without gateways (local routes), we can't easily determine the interface
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                debug!("No interface found, returning 'unknown'");
+                "unknown".to_string()
+            });
 
         // Add this hop to the path
         path.push(PathHop {
@@ -785,8 +918,14 @@ pub async fn web_server_command(
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
     info!("🌐 Web UI available at: http://{}", bind_addr);
-    info!("📊 API documentation available at: http://{}/api-docs", bind_addr);
-    info!("📋 OpenAPI specification at: http://{}/api-docs/openapi.json", bind_addr);
+    info!(
+        "📊 API documentation available at: http://{}/api-docs",
+        bind_addr
+    );
+    info!(
+        "📋 OpenAPI specification at: http://{}/api-docs/openapi.json",
+        bind_addr
+    );
     info!("Press Ctrl+C to stop the server");
 
     axum::serve(listener, app).await?;

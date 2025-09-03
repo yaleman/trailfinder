@@ -4,7 +4,7 @@
 {% block page_title %}Trailfinder - Network Topology{% endblock %}
 
 {% block extra_head %}
-<script src="/static/d3.min.js"
+<script src="/static/third_party/d3.min.js"
     integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A=="></script>
 {% endblock %}
 
@@ -33,5 +33,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/common.js"></script>
+<script src="/static/topology-utils.js"></script>
 <script src="/static/topology.js"></script>
 {% endblock %}

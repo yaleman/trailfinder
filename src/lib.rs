@@ -228,9 +228,24 @@ impl InterfaceAddress {
     }
 
     pub fn to_cidr(&self) -> Result<cidr::IpCidr, cidr::errors::NetworkParseError> {
+        // Calculate the network address from the interface address
         match self.ip {
-            IpAddr::V4(ipv4) => cidr::Ipv4Cidr::new(ipv4, self.prefix_length).map(cidr::IpCidr::V4),
-            IpAddr::V6(ipv6) => cidr::Ipv6Cidr::new(ipv6, self.prefix_length).map(cidr::IpCidr::V6),
+            IpAddr::V4(ipv4) => {
+                // Create a mask for the network
+                let mask = !((1u32 << (32 - self.prefix_length)) - 1);
+                let ip_u32 = u32::from(ipv4);
+                let network_u32 = ip_u32 & mask;
+                let network_ip = std::net::Ipv4Addr::from(network_u32);
+                cidr::Ipv4Cidr::new(network_ip, self.prefix_length).map(cidr::IpCidr::V4)
+            },
+            IpAddr::V6(ipv6) => {
+                // For IPv6, calculate the network address  
+                let ip_u128 = u128::from(ipv6);
+                let mask = !((1u128 << (128 - self.prefix_length)) - 1);
+                let network_u128 = ip_u128 & mask;
+                let network_ip = std::net::Ipv6Addr::from(network_u128);
+                cidr::Ipv6Cidr::new(network_ip, self.prefix_length).map(cidr::IpCidr::V6)
+            }
         }
     }
 }

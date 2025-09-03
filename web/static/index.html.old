@@ -105,6 +105,8 @@
             </div>
         </main>
 
+        <script src="common.js"></script>
+        <script src="topology-utils.js"></script>
         <script src="app.js"></script>
     </body>
 </html>

@@ -1,7 +1,7 @@
 use crate::config::AppConfig;
+use crate::tests::ChromeDriverHandle;
 use crate::web::web_server_command;
 use crate::{TrailFinderError, setup_test_logging};
-use crate::tests::ChromeDriverHandle;
 use rand::Rng;
 use std::time::Duration;
 use thirtyfour::prelude::*;
@@ -40,10 +40,10 @@ async fn start_test_server()
 async fn create_driver_with_chrome() -> Result<(WebDriver, ChromeDriverHandle), TrailFinderError> {
     let chromedriver = ChromeDriverHandle::start()
         .map_err(|e| TrailFinderError::Generic(format!("Failed to start ChromeDriver: {}", e)))?;
-    
+
     // Wait for ChromeDriver to be ready
     sleep(Duration::from_secs(2)).await;
-    
+
     let mut caps = DesiredCapabilities::chrome();
     caps.add_arg("--headless")
         .map_err(|e| TrailFinderError::Generic(format!("Failed to set Chrome args: {}", e)))?;
@@ -52,9 +52,10 @@ async fn create_driver_with_chrome() -> Result<(WebDriver, ChromeDriverHandle), 
     caps.add_arg("--disable-dev-shm-usage")
         .map_err(|e| TrailFinderError::Generic(format!("Failed to set Chrome args: {}", e)))?;
 
-    let driver = WebDriver::new(&chromedriver.webdriver_url(), caps).await
+    let driver = WebDriver::new(&chromedriver.webdriver_url(), caps)
+        .await
         .map_err(|e| TrailFinderError::Generic(format!("Failed to create WebDriver: {}", e)))?;
-    
+
     Ok((driver, chromedriver))
 }
 
@@ -111,7 +112,10 @@ async fn test_topology_page_loads() -> Result<(), TrailFinderError> {
         "Device modal should be present"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     // ChromeDriver will be automatically killed when _chromedriver drops
 
     Ok(())
@@ -149,7 +153,10 @@ async fn test_topology_loads_data() -> Result<(), TrailFinderError> {
     let labels = driver.find_all(By::Css("g text")).await?;
     assert!(!labels.is_empty(), "Should have device labels in topology");
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
 
     Ok(())
 }
@@ -186,7 +193,10 @@ async fn test_refresh_topology_button() -> Result<(), TrailFinderError> {
         "Topology should reload after refresh"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }
 
@@ -216,7 +226,10 @@ async fn test_reset_zoom_button() -> Result<(), TrailFinderError> {
         "Reset zoom button should be enabled"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }
 
@@ -252,7 +265,10 @@ async fn test_show_networks_toggle() -> Result<(), TrailFinderError> {
         "Show networks toggle should change state"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }
 
@@ -316,7 +332,10 @@ async fn test_device_modal_functionality() -> Result<(), TrailFinderError> {
         }
     }
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }
 
@@ -348,7 +367,10 @@ async fn test_api_endpoints_work() -> Result<(), TrailFinderError> {
         "API should return JSON with devices and connections"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }
 
@@ -385,6 +407,9 @@ async fn test_error_handling() -> Result<(), TrailFinderError> {
         "Main page should still work after API error"
     );
 
-    driver.quit().await.map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
+    driver
+        .quit()
+        .await
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to quit driver: {}", e)))?;
     Ok(())
 }

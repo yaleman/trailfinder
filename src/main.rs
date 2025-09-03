@@ -45,7 +45,7 @@ enum Commands {
     /// Start web server for network topology visualization
     Web {
         /// Port to bind the web server to
-        #[arg(short, long, default_value = "3000")]
+        #[arg(short, long, default_value = "8000")]
         port: u16,
         /// Address to bind the web server to
         #[arg(short, long, default_value = "127.0.0.1")]
@@ -245,9 +245,7 @@ async fn identify_command(
             }
         }
 
-        match identify_and_interrogate_device(device_config.clone())
-            .await
-        {
+        match identify_and_interrogate_device(device_config.clone()).await {
             Ok((device_id, brand, device_type, device_state)) => {
                 info!("{device_id} Identified as {:?} {:?}", brand, device_type);
 
@@ -487,13 +485,10 @@ async fn identify_and_interrogate_device(
     debug!("Connecting via SSH using processed device config...");
 
     // Use the new method that leverages preprocessed SSH configuration
-    let mut ssh_client = SshClient::connect_with_device_config(
-        &device_config,
-        socket_addr,
-        timeout,
-    )
-    .await
-    .map_err(|err| TrailFinderError::Generic(err.to_string()))?;
+    let mut ssh_client =
+        SshClient::connect_with_device_config(&device_config, socket_addr, timeout)
+            .await
+            .map_err(|err| TrailFinderError::Generic(err.to_string()))?;
 
     let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client).await?;
 

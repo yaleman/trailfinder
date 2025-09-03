@@ -3,3 +3,4 @@ states/
 devices.json
 tarpaulin-report.html
 openapi.json
+.playwright-mcp/

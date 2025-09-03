@@ -16,37 +16,28 @@ function initializeEventListeners() {
     document.getElementById('source-device').addEventListener('change', updateSourceInterfaces);
 }
 
-// API Functions
-async function apiCall(endpoint, options = {}) {
-    try {
-        const response = await fetch(`/api${endpoint}`, {
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            ...options
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        return await response.json();
-    } catch (error) {
-        console.error("API call failed", endpoint, error);
-        showError(`Failed to load data from ${endpoint}`);
-        return null;
-    }
-}
+// API Functions are now in common.js
 
 // Path Finder Functions
 async function loadPathfinderDevices() {
     devicesData = await apiCall('/devices');
     if (devicesData) {
         const sourceSelect = document.getElementById('source-device');
-        sourceSelect.innerHTML = '<option value="">Select device...</option>' +
-            devicesData.map(device =>
-                `<option value="${device.device_id}">${device.hostname}</option>`
-            ).join('');
+        sourceSelect.textContent = '';
+        
+        // Add default option
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select device...';
+        sourceSelect.appendChild(defaultOption);
+        
+        // Add device options
+        devicesData.forEach(device => {
+            const option = document.createElement('option');
+            option.value = device.device_id;
+            option.textContent = device.hostname;
+            sourceSelect.appendChild(option);
+        });
     }
 }
 
@@ -55,16 +46,31 @@ async function updateSourceInterfaces() {
     const interfaceSelect = document.getElementById('source-interface');
 
     if (!deviceId) {
-        interfaceSelect.innerHTML = '<option value="">Select interface...</option>';
+        interfaceSelect.textContent = '';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select interface...';
+        interfaceSelect.appendChild(defaultOption);
         return;
     }
 
     const deviceDetail = await apiCall(`/devices/${deviceId}`);
     if (deviceDetail) {
-        interfaceSelect.innerHTML = '<option value="">Select interface...</option>' +
-            deviceDetail.interfaces.map(iface =>
-                `<option value="${iface.name}">${iface.name} (${getInterfaceTypeDisplay(iface.interface_type)})</option>`
-            ).join('');
+        interfaceSelect.textContent = '';
+        
+        // Add default option
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Select interface...';
+        interfaceSelect.appendChild(defaultOption);
+        
+        // Add interface options
+        deviceDetail.interfaces.forEach(iface => {
+            const option = document.createElement('option');
+            option.value = iface.name;
+            option.textContent = `${iface.name} (${getInterfaceTypeDisplay(iface.interface_type)})`;
+            interfaceSelect.appendChild(option);
+        });
     }
 }
 
@@ -90,8 +96,7 @@ async function findPath() {
         }
     };
 
-    const results = document.getElementById('path-results');
-    results.innerHTML = '<div class="loading">Finding path...</div>';
+    createLoadingDiv('Finding path...', 'path-results');
 
     const pathResult = await apiCall('/pathfind', {
         method: 'POST',
@@ -105,63 +110,65 @@ async function findPath() {
 
 function renderPathResult(result) {
     const container = document.getElementById('path-results');
+    container.textContent = '';
 
     if (!result.success) {
-        container.innerHTML = `
-            <div class="error">
-                <h3>Path Finding Failed</h3>
-                <p>${result.error}</p>
-            </div>
-        `;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error';
+        
+        const errorTitle = document.createElement('h3');
+        errorTitle.textContent = 'Path Finding Failed';
+        errorDiv.appendChild(errorTitle);
+        
+        const errorMessage = document.createElement('p');
+        errorMessage.textContent = result.error;
+        errorDiv.appendChild(errorMessage);
+        
+        container.appendChild(errorDiv);
         return;
     }
 
-    const pathHTML = result.path.map((hop, index) => `
-        <div class="path-hop">
-            <div class="hop-number">${index + 1}</div>
-            <div class="hop-details">
-                <strong>${hop.device}</strong> via ${hop.interface}
-                ${hop.gateway ? `→ ${hop.gateway}` : ''}
-                <div class="hop-network">${hop.network}</div>
-            </div>
-        </div>
-    `).join('');
-
-    container.innerHTML = `
-        <h3>Path Found (${result.total_hops} hops)</h3>
-        <div class="path-visualization">
-            ${pathHTML}
-        </div>
-    `;
+    const title = document.createElement('h3');
+    title.textContent = `Path Found (${result.total_hops} hops)`;
+    container.appendChild(title);
+    
+    const pathVisualization = document.createElement('div');
+    pathVisualization.className = 'path-visualization';
+    
+    result.path.forEach((hop, index) => {
+        const pathHop = document.createElement('div');
+        pathHop.className = 'path-hop';
+        
+        const hopNumber = document.createElement('div');
+        hopNumber.className = 'hop-number';
+        hopNumber.textContent = index + 1;
+        pathHop.appendChild(hopNumber);
+        
+        const hopDetails = document.createElement('div');
+        hopDetails.className = 'hop-details';
+        
+        const deviceInfo = document.createElement('strong');
+        deviceInfo.textContent = hop.device;
+        hopDetails.appendChild(deviceInfo);
+        
+        const viaText = document.createTextNode(` via ${hop.interface}`);
+        hopDetails.appendChild(viaText);
+        
+        if (hop.gateway) {
+            const gatewayText = document.createTextNode(` → ${hop.gateway}`);
+            hopDetails.appendChild(gatewayText);
+        }
+        
+        const hopNetwork = document.createElement('div');
+        hopNetwork.className = 'hop-network';
+        hopNetwork.textContent = hop.network;
+        hopDetails.appendChild(hopNetwork);
+        
+        pathHop.appendChild(hopDetails);
+        pathVisualization.appendChild(pathHop);
+    });
+    
+    container.appendChild(pathVisualization);
 }
 
-// Utility Functions
-function getInterfaceTypeDisplay(interfaceType) {
-    if (typeof interfaceType === 'object') {
-        // Handle {"Other": "wg"} format
-        const type = Object.keys(interfaceType)[0];
-        const value = interfaceType[type];
-        return type === 'Other' ? value : type;
-    }
-    return interfaceType;
-}
-
-function showError(message) {
-    // Create a simple error notification
-    const error = document.createElement('div');
-    error.style.position = 'fixed';
-    error.style.top = '20px';
-    error.style.right = '20px';
-    error.style.background = '#e74c3c';
-    error.style.color = 'white';
-    error.style.padding = '1rem';
-    error.style.borderRadius = '8px';
-    error.style.zIndex = '9999';
-    error.textContent = message;
-
-    document.body.appendChild(error);
-
-    setTimeout(() => {
-        document.body.removeChild(error);
-    }, 5000);
-}
+// Utility functions are now in common.js

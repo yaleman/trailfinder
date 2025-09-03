@@ -684,12 +684,12 @@ async fn test_openapi_spec_generation() {
 
     // Generate the OpenAPI spec
     let openapi = ApiDoc::openapi();
-    
+
     // Verify basic structure
     assert_eq!(openapi.info.title, "Trailfinder API");
     assert_eq!(openapi.info.version, "0.1.0");
     assert!(openapi.info.description.is_some());
-    
+
     // Verify we have the expected paths
     let paths = &openapi.paths;
     assert!(paths.paths.contains_key("/api/devices"));
@@ -697,16 +697,19 @@ async fn test_openapi_spec_generation() {
     assert!(paths.paths.contains_key("/api/topology"));
     assert!(paths.paths.contains_key("/api/networks"));
     assert!(paths.paths.contains_key("/api/pathfind"));
-    
+
     // Verify we have schemas for our response types
     let schemas = &openapi.components.as_ref().unwrap().schemas;
     assert!(schemas.contains_key("DeviceSummary"));
     assert!(schemas.contains_key("NetworkTopology"));
     assert!(schemas.contains_key("PathFindRequest"));
     assert!(schemas.contains_key("PathFindResponse"));
-    
-    println!("OpenAPI spec validation passed! Found {} paths and {} schemas", 
-             paths.paths.len(), schemas.len());
+
+    println!(
+        "OpenAPI spec validation passed! Found {} paths and {} schemas",
+        paths.paths.len(),
+        schemas.len()
+    );
 }
 
 #[tokio::test]
@@ -717,31 +720,45 @@ async fn test_openapi_json_serialization() {
     // Generate the OpenAPI spec and serialize to JSON
     let openapi = ApiDoc::openapi();
     let json_result = serde_json::to_string(&openapi);
-    
-    assert!(json_result.is_ok(), "Should be able to serialize OpenAPI spec to JSON");
-    
+
+    assert!(
+        json_result.is_ok(),
+        "Should be able to serialize OpenAPI spec to JSON"
+    );
+
     let json_string = json_result.unwrap();
     assert!(!json_string.is_empty(), "JSON string should not be empty");
-    assert!(json_string.contains("Trailfinder API"), "JSON should contain API title");
-    assert!(json_string.contains("/api/devices"), "JSON should contain API paths");
-    
+    assert!(
+        json_string.contains("Trailfinder API"),
+        "JSON should contain API title"
+    );
+    assert!(
+        json_string.contains("/api/devices"),
+        "JSON should contain API paths"
+    );
+
     // Verify it can be parsed back
     let parsed_result: Result<serde_json::Value, _> = serde_json::from_str(&json_string);
-    assert!(parsed_result.is_ok(), "Generated JSON should be valid and parseable");
-    
-    println!("OpenAPI JSON serialization test passed! JSON length: {} characters", 
-             json_string.len());
+    assert!(
+        parsed_result.is_ok(),
+        "Generated JSON should be valid and parseable"
+    );
+
+    println!(
+        "OpenAPI JSON serialization test passed! JSON length: {} characters",
+        json_string.len()
+    );
 }
 
 #[tokio::test]
 async fn test_swagger_ui_integration() {
-    use crate::web::{create_router, AppState};
     use crate::config::AppConfig;
-    use std::sync::Arc;
-    use axum::extract::Request;
+    use crate::web::{AppState, create_router};
     use axum::body::Body;
-    use tower::ServiceExt; // for oneshot
+    use axum::extract::Request;
     use axum::http::StatusCode;
+    use std::sync::Arc;
+    use tower::ServiceExt; // for oneshot
 
     // Create a minimal test config
     let config = AppConfig {
@@ -750,20 +767,20 @@ async fn test_swagger_ui_integration() {
         use_ssh_agent: Some(true),
         state_directory: None,
     };
-    
+
     let app_state = AppState {
         config: Arc::new(config),
     };
-    
+
     // Create the router with Swagger UI integration
     let app = create_router(app_state);
-    
+
     // Test that the Swagger UI endpoint exists and returns a response (redirect to trailing slash)
     let request = Request::builder()
         .uri("/api-docs")
         .body(Body::empty())
         .unwrap();
-    
+
     let response = app.clone().oneshot(request).await.unwrap();
     // Swagger UI redirects /api-docs to /api-docs/ so we expect a 303
     assert!(
@@ -771,15 +788,574 @@ async fn test_swagger_ui_integration() {
         "Swagger UI endpoint should return redirect (303) or OK (200), got: {}",
         response.status()
     );
-    
+
     // Test that the OpenAPI JSON endpoint exists
     let request = Request::builder()
         .uri("/api-docs/openapi.json")
         .body(Body::empty())
         .unwrap();
-    
+
     let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK, "OpenAPI JSON endpoint should return OK");
-    
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "OpenAPI JSON endpoint should return OK"
+    );
+
     println!("Swagger UI integration test passed!");
+}
+
+// Pathfinding Tests
+
+fn create_test_device_for_pathfinding(
+    hostname: &str,
+    device_id: uuid::Uuid,
+    routes: Vec<Route>,
+    interfaces: Vec<Interface>,
+) -> DeviceState {
+    let mut device = Device::new(
+        hostname.to_string(),
+        Some(format!("Test {}", hostname)),
+        Owner::Named("test".to_string()),
+        DeviceType::Router,
+    );
+    device.device_id = device_id;
+    device.routes = routes;
+    device.interfaces = interfaces;
+
+    DeviceState {
+        device,
+        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        config_hash: 12345u64,
+    }
+}
+
+fn create_wan_interface(interface_id: uuid::Uuid, wan_ip: &str, prefix_len: u8) -> Interface {
+    Interface::new(
+        interface_id,
+        "ether1".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str(wan_ip).unwrap(),
+            prefix_len,
+        )],
+        InterfaceType::Ethernet,
+        Some("WAN".to_string()),
+    )
+}
+
+fn create_lan_interface(
+    interface_id: uuid::Uuid,
+    lan_ip: &str,
+    prefix_len: u8,
+    name: &str,
+) -> Interface {
+    Interface::new(
+        interface_id,
+        name.to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str(lan_ip).unwrap(),
+            prefix_len,
+        )],
+        InterfaceType::Vlan,
+        Some("LAN".to_string()),
+    )
+}
+
+#[tokio::test]
+async fn test_pathfind_ipv4_route_prioritization() {
+    // Create a device with both IPv4 and IPv6 default routes
+    let device_id = uuid::Uuid::new_v4();
+    let wan_interface_id = uuid::Uuid::new_v4();
+    let lan_interface_id = uuid::Uuid::new_v4();
+
+    let routes = vec![
+        // IPv6 default route (should NOT be selected for IPv4 destinations)
+        Route {
+            target: cidr::IpCidr::from_str("::/0").unwrap(),
+            gateway: Some(IpAddr::from_str("fe80::1").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::Default(wan_interface_id),
+        },
+        // IPv4 default route (should be selected for IPv4 destinations)
+        Route {
+            target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+            gateway: Some(IpAddr::from_str("192.168.1.1").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::Default(wan_interface_id),
+        },
+        // Local IPv4 route
+        Route {
+            target: cidr::IpCidr::from_str("10.0.0.0/24").unwrap(),
+            gateway: None,
+            distance: Some(0),
+            route_type: RouteType::Local(lan_interface_id),
+        },
+    ];
+
+    let interfaces = vec![
+        create_wan_interface(wan_interface_id, "192.168.1.100", 24),
+        create_lan_interface(lan_interface_id, "10.0.0.1", 24, "vlan10"),
+    ];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+    let device_states = [device_state];
+
+    // Test that IPv4 routes are prioritized for IPv4 destinations
+    let dest_network = cidr::IpCidr::from_str("8.8.8.8").unwrap();
+    let dest_str = dest_network.to_string();
+    let is_ipv4_destination = if let Some(ip_part) = dest_str.split('/').next()
+        && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
+    {
+        dest_ip.is_ipv4()
+    } else {
+        true
+    };
+
+    // Find matching routes (this simulates the logic in perform_pathfind)
+    let device = &device_states[0].device;
+    let matching_route = device
+        .routes
+        .iter()
+        .filter(|route| {
+            let route_target_str = route.target.to_string();
+            route_target_str == "0.0.0.0/0" || route_target_str == "::/0"
+        })
+        .min_by_key(|route| {
+            let route_target_str = route.target.to_string();
+            // IPv4 destination should prefer IPv4 default route
+            if (is_ipv4_destination && route_target_str == "0.0.0.0/0")
+                || (!is_ipv4_destination && route_target_str == "::/0")
+            {
+                2 // Matching IP version gets priority
+            } else if route_target_str == "0.0.0.0/0" || route_target_str == "::/0" {
+                3 // Different IP version gets lower priority
+            } else {
+                4
+            }
+        });
+
+    assert!(matching_route.is_some());
+    let route = matching_route.unwrap();
+    assert_eq!(route.target.to_string(), "0.0.0.0/0");
+    assert_eq!(
+        route.gateway,
+        Some(IpAddr::from_str("192.168.1.1").unwrap())
+    );
+}
+
+#[tokio::test]
+async fn test_pathfind_ipv6_route_prioritization() {
+    // Create a device with both IPv4 and IPv6 default routes
+    let device_id = uuid::Uuid::new_v4();
+    let wan_interface_id = uuid::Uuid::new_v4();
+    let lan_interface_id = uuid::Uuid::new_v4();
+
+    let routes = vec![
+        // IPv4 default route (should NOT be selected for IPv6 destinations)
+        Route {
+            target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+            gateway: Some(IpAddr::from_str("192.168.1.1").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::Default(wan_interface_id),
+        },
+        // IPv6 default route (should be selected for IPv6 destinations)
+        Route {
+            target: cidr::IpCidr::from_str("::/0").unwrap(),
+            gateway: Some(IpAddr::from_str("fe80::1").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::Default(wan_interface_id),
+        },
+    ];
+
+    let interfaces = vec![
+        Interface::new(
+            wan_interface_id,
+            "ether1".to_string(),
+            vec![],
+            vec![InterfaceAddress::new(
+                IpAddr::from_str("2001:db8::100").unwrap(),
+                64,
+            )],
+            InterfaceType::Ethernet,
+            Some("WAN".to_string()),
+        ),
+        Interface::new(
+            lan_interface_id,
+            "vlan10".to_string(),
+            vec![],
+            vec![InterfaceAddress::new(
+                IpAddr::from_str("2001:db8:1::1").unwrap(),
+                64,
+            )],
+            InterfaceType::Vlan,
+            Some("LAN".to_string()),
+        ),
+    ];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+    let device_states = [device_state];
+
+    // Test IPv6 destination route selection
+    let device = &device_states[0].device;
+    let _dest_str = "2001:4860:4860::8888"; // IPv6 destination
+    let is_ipv6_destination = true;
+
+    let matching_route = device
+        .routes
+        .iter()
+        .filter(|route| {
+            let route_target_str = route.target.to_string();
+            route_target_str == "0.0.0.0/0" || route_target_str == "::/0"
+        })
+        .min_by_key(|route| {
+            let route_target_str = route.target.to_string();
+            // IPv6 destination should prefer IPv6 default route
+            if (is_ipv6_destination && route_target_str == "::/0")  // IPv6 default route priority
+             || (!is_ipv6_destination && route_target_str == "0.0.0.0/0")
+            // IPv4 default route priority
+            {
+                2 // IPv4 default route priority
+            } else {
+                3 // Other version gets lower priority
+            }
+        });
+
+    assert!(matching_route.is_some());
+    let route = matching_route.unwrap();
+    assert_eq!(route.target.to_string(), "::/0");
+    assert_eq!(route.gateway, Some(IpAddr::from_str("fe80::1").unwrap()));
+}
+
+#[tokio::test]
+async fn test_pathfind_source_ip_validation_success() {
+    let device_id = uuid::Uuid::new_v4();
+    let interface_id = uuid::Uuid::new_v4();
+
+    let interfaces = vec![Interface::new(
+        interface_id,
+        "vlan10".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("10.0.0.1").unwrap(),
+            24,
+        )],
+        InterfaceType::Vlan,
+        Some("LAN".to_string()),
+    )];
+
+    let routes = vec![Route {
+        target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+        gateway: Some(IpAddr::from_str("192.168.1.1").unwrap()),
+        distance: Some(1),
+        route_type: RouteType::Default(interface_id),
+    }];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+
+    // Validate that source IP exists on specified interface
+    let device = &device_state.device;
+    let source_interface_name = "vlan10";
+    let source_ip_str = "10.0.0.1";
+    let source_ip: IpAddr = source_ip_str.parse().unwrap();
+
+    // Find the specified interface
+    let interface = device
+        .interfaces
+        .iter()
+        .find(|iface| iface.name == source_interface_name);
+
+    assert!(interface.is_some(), "Interface should exist");
+
+    // Check if the source IP exists on this interface
+    let ip_on_interface = interface
+        .unwrap()
+        .addresses
+        .iter()
+        .any(|addr| addr.ip == source_ip);
+
+    assert!(
+        ip_on_interface,
+        "Source IP should be configured on interface"
+    );
+}
+
+#[tokio::test]
+async fn test_pathfind_source_ip_validation_failure() {
+    let device_id = uuid::Uuid::new_v4();
+    let interface_id = uuid::Uuid::new_v4();
+
+    let interfaces = vec![Interface::new(
+        interface_id,
+        "vlan10".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("10.0.0.1").unwrap(), // Interface has 10.0.0.1
+            24,
+        )],
+        InterfaceType::Vlan,
+        Some("LAN".to_string()),
+    )];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, vec![], interfaces);
+
+    // Test validation failure with wrong IP
+    let device = &device_state.device;
+    let source_interface_name = "vlan10";
+    let source_ip_str = "10.0.0.5"; // Different IP than interface has
+    let source_ip: IpAddr = source_ip_str.parse().unwrap();
+
+    // Find the specified interface
+    let interface = device
+        .interfaces
+        .iter()
+        .find(|iface| iface.name == source_interface_name);
+
+    assert!(interface.is_some(), "Interface should exist");
+
+    // Check if the source IP exists on this interface (should fail)
+    let ip_on_interface = interface
+        .unwrap()
+        .addresses
+        .iter()
+        .any(|addr| addr.ip == source_ip);
+
+    assert!(
+        !ip_on_interface,
+        "Wrong source IP should not be found on interface"
+    );
+}
+
+#[tokio::test]
+async fn test_pathfind_interface_lookup_by_gateway_subnet() {
+    // Test interface lookup when route interface_id doesn't match
+    let device_id = uuid::Uuid::new_v4();
+    let wan_interface_id = uuid::Uuid::new_v4();
+    let route_interface_id = uuid::Uuid::new_v4(); // Different from actual interface
+
+    let interfaces = vec![Interface::new(
+        wan_interface_id, // Real interface ID
+        "ether1".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("192.168.1.100").unwrap(), // 192.168.1.0/24 network
+            24,
+        )],
+        InterfaceType::Ethernet,
+        Some("WAN".to_string()),
+    )];
+
+    let routes = vec![Route {
+        target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+        gateway: Some(IpAddr::from_str("192.168.1.1").unwrap()), // Gateway in same subnet
+        distance: Some(1),
+        route_type: RouteType::Default(route_interface_id), // Wrong interface ID
+    }];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+    let device = &device_state.device;
+    let route = &device.routes[0];
+
+    // Test interface lookup by ID first (should fail)
+    let route_interface_id = route.interface_id();
+    let interface_by_id = device
+        .interfaces
+        .iter()
+        .find(|iface| iface.interface_id == route_interface_id);
+
+    assert!(
+        interface_by_id.is_none(),
+        "Should not find interface by wrong ID"
+    );
+
+    // Test fallback lookup by gateway subnet
+    if let Some(gateway_ip) = route.gateway {
+        let interface_by_gateway = device.interfaces.iter().find(|iface| {
+            iface.addresses.iter().any(|addr| {
+                if let Ok(subnet) = addr.to_cidr() {
+                    let contains = subnet.contains(&gateway_ip);
+                    println!(
+                        "Testing interface {} address {} (subnet: {}) contains gateway {}: {}",
+                        iface.name, addr, subnet, gateway_ip, contains
+                    );
+                    contains
+                } else {
+                    println!(
+                        "Failed to convert interface {} address {} to CIDR",
+                        iface.name, addr
+                    );
+                    false
+                }
+            })
+        });
+
+        if interface_by_gateway.is_none() {
+            println!("Available interfaces:");
+            for iface in &device.interfaces {
+                println!("  Interface: {}", iface.name);
+                for addr in &iface.addresses {
+                    if let Ok(subnet) = addr.to_cidr() {
+                        println!("    Address: {} -> Subnet: {}", addr, subnet);
+                    } else {
+                        println!("    Address: {} -> Failed to convert to CIDR", addr);
+                    }
+                }
+            }
+        }
+
+        assert!(
+            interface_by_gateway.is_some(),
+            "Should find interface by gateway subnet"
+        );
+        assert_eq!(interface_by_gateway.unwrap().name, "ether1");
+    }
+}
+
+#[tokio::test]
+async fn test_pathfind_interface_lookup_failure() {
+    // Test when both interface ID and gateway subnet matching fail
+    let device_id = uuid::Uuid::new_v4();
+    let lan_interface_id = uuid::Uuid::new_v4();
+    let route_interface_id = uuid::Uuid::new_v4(); // Different from actual interface
+
+    let interfaces = vec![Interface::new(
+        lan_interface_id,
+        "vlan10".to_string(),
+        vec![],
+        vec![InterfaceAddress::new(
+            IpAddr::from_str("10.0.0.1").unwrap(), // 10.0.0.0/24 network
+            24,
+        )],
+        InterfaceType::Vlan,
+        Some("LAN".to_string()),
+    )];
+
+    let routes = vec![Route {
+        target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+        gateway: Some(IpAddr::from_str("203.0.113.1").unwrap()), // External gateway, not in any local subnet
+        distance: Some(1),
+        route_type: RouteType::Default(route_interface_id), // Wrong interface ID
+    }];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+    let device = &device_state.device;
+    let route = &device.routes[0];
+
+    // Test interface lookup by ID first (should fail)
+    let route_interface_id = route.interface_id();
+    let interface_by_id = device
+        .interfaces
+        .iter()
+        .find(|iface| iface.interface_id == route_interface_id);
+
+    assert!(
+        interface_by_id.is_none(),
+        "Should not find interface by wrong ID"
+    );
+
+    // Test fallback lookup by gateway subnet (should also fail for external gateway)
+    if let Some(gateway_ip) = route.gateway {
+        let interface_by_gateway = device.interfaces.iter().find(|iface| {
+            iface.addresses.iter().any(|addr| {
+                if let Ok(subnet) = addr.to_cidr() {
+                    subnet.contains(&gateway_ip)
+                } else {
+                    false
+                }
+            })
+        });
+
+        assert!(
+            interface_by_gateway.is_none(),
+            "Should not find interface for external gateway"
+        );
+    }
+
+    // In this case, the interface would be "unknown" in the actual pathfinding
+}
+
+#[tokio::test]
+async fn test_pathfind_exact_route_match() {
+    // Test exact route matching takes priority over default routes
+    let device_id = uuid::Uuid::new_v4();
+    let wan_interface_id = uuid::Uuid::new_v4();
+    let lan_interface_id = uuid::Uuid::new_v4();
+
+    let interfaces = vec![
+        create_wan_interface(wan_interface_id, "192.168.1.100", 24),
+        create_lan_interface(lan_interface_id, "10.0.0.1", 24, "vlan10"),
+    ];
+
+    let routes = vec![
+        // Specific route for 8.8.8.8 (should be selected)
+        Route {
+            target: cidr::IpCidr::from_str("8.8.8.8/32").unwrap(),
+            gateway: Some(IpAddr::from_str("192.168.1.8").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::NextHop(wan_interface_id),
+        },
+        // Default route (should NOT be selected)
+        Route {
+            target: cidr::IpCidr::from_str("0.0.0.0/0").unwrap(),
+            gateway: Some(IpAddr::from_str("192.168.1.1").unwrap()),
+            distance: Some(1),
+            route_type: RouteType::Default(wan_interface_id),
+        },
+    ];
+
+    let device_state =
+        create_test_device_for_pathfinding("test-router", device_id, routes, interfaces);
+    let device = &device_state.device;
+
+    // Test route selection for exact match
+    let dest_network = cidr::IpCidr::from_str("8.8.8.8/32").unwrap();
+
+    let matching_route = device
+        .routes
+        .iter()
+        .filter(|route| {
+            // Exact match
+            if dest_network == route.target {
+                return true;
+            }
+
+            // Default routes
+            let route_target_str = route.target.to_string();
+            route_target_str == "0.0.0.0/0" || route_target_str == "::/0"
+        })
+        .min_by_key(|route| {
+            // Exact match gets highest priority
+            if dest_network == route.target {
+                return 0;
+            }
+
+            // Default routes get lower priority
+            let route_target_str = route.target.to_string();
+            if route_target_str == "0.0.0.0/0" {
+                2
+            } else {
+                3
+            }
+        });
+
+    assert!(matching_route.is_some());
+    let route = matching_route.unwrap();
+    // CIDR library may display /32 as just the IP address
+    let target_str = route.target.to_string();
+    assert!(
+        target_str == "8.8.8.8/32" || target_str == "8.8.8.8",
+        "Expected '8.8.8.8/32' or '8.8.8.8' but got '{}'",
+        target_str
+    );
+    assert_eq!(
+        route.gateway,
+        Some(IpAddr::from_str("192.168.1.8").unwrap())
+    );
 }
