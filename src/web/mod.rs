@@ -181,6 +181,12 @@ pub struct PathHop {
     pub gateway: Option<String>,
     pub network: String,
     pub vlan: Option<u16>,
+    // New optional fields for enhanced pathfinding
+    pub incoming_interface: Option<String>,
+    pub incoming_vlan: Option<u16>,
+    pub outgoing_interface: Option<String>,
+    pub outgoing_vlan: Option<u16>,
+    pub source_ip: Option<String>,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -603,11 +609,17 @@ pub async fn find_path(
                     .path
                     .into_iter()
                     .map(|hop| PathHop {
-                        device: hop.device,
-                        interface: hop.interface,
-                        gateway: hop.gateway,
-                        network: hop.network,
-                        vlan: hop.vlan,
+                        device: hop.device.clone(),
+                        interface: hop.outgoing_interface.clone(), // Backward compatibility
+                        gateway: hop.gateway.clone(),
+                        network: hop.network.clone(),
+                        vlan: hop.outgoing_vlan, // Backward compatibility
+                        // New fields
+                        incoming_interface: hop.incoming_interface,
+                        incoming_vlan: hop.incoming_vlan,
+                        outgoing_interface: Some(hop.outgoing_interface),
+                        outgoing_vlan: hop.outgoing_vlan,
+                        source_ip: hop.source_ip,
                     })
                     .collect();
 
@@ -641,7 +653,6 @@ pub async fn find_path(
         }
     }
 }
-
 
 /// Start the web server with the given configuration and bind address/port
 /// This function is used by both the CLI and tests

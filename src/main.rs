@@ -12,7 +12,7 @@ use trailfinder::{
     DeviceType, TrailFinderError,
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
-    pathfind::{find_path, PathEndpoint, PathFindRequest},
+    pathfind::{PathEndpoint, PathFindRequest, find_path},
     ssh::{DeviceIdentifier, SshClient},
     web::web_server_command,
 };
@@ -201,14 +201,20 @@ async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             pathfind_command(
                 &app_config,
-                source_ip,
-                destination_ip,
-                source_device,
-                source_interface,
-                source_vlan,
-                dest_device,
-                dest_interface,
-                dest_vlan,
+                PathEndpoint {
+                    device: None,
+                    device_id: source_device,
+                    interface: source_interface,
+                    ip: Some(source_ip),
+                    vlan: source_vlan,
+                },
+                PathEndpoint {
+                    device: None,
+                    device_id: dest_device,
+                    interface: dest_interface,
+                    ip: Some(destination_ip),
+                    vlan: dest_vlan,
+                },
             )
             .await?;
         }
@@ -556,43 +562,17 @@ async fn identify_and_interrogate_device(
 
 async fn pathfind_command(
     app_config: &AppConfig,
-    source_ip: String,
-    destination_ip: String,
-    source_device: Option<String>,
-    source_interface: Option<String>,
-    source_vlan: Option<u16>,
-    dest_device: Option<String>,
-    dest_interface: Option<String>,
-    dest_vlan: Option<u16>,
+    source: PathEndpoint,
+    destination: PathEndpoint,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("🛣️  Finding path from {} to {}", source_ip, destination_ip);
-
-    // Build the pathfinding request
-    let mut source_endpoint = PathEndpoint::new().with_ip(source_ip);
-    if let Some(device) = source_device {
-        source_endpoint = source_endpoint.with_device(device);
-    }
-    if let Some(interface) = source_interface {
-        source_endpoint = source_endpoint.with_interface(interface);
-    }
-    if let Some(vlan) = source_vlan {
-        source_endpoint = source_endpoint.with_vlan(vlan);
-    }
-
-    let mut dest_endpoint = PathEndpoint::new().with_ip(destination_ip.clone());
-    if let Some(device) = dest_device {
-        dest_endpoint = dest_endpoint.with_device(device);
-    }
-    if let Some(interface) = dest_interface {
-        dest_endpoint = dest_endpoint.with_interface(interface);
-    }
-    if let Some(vlan) = dest_vlan {
-        dest_endpoint = dest_endpoint.with_vlan(vlan);
-    }
+    info!(
+        "🛣️  Finding path from {:?} to {:?}",
+        source.ip, destination.ip
+    );
 
     let request = PathFindRequest {
-        source: source_endpoint,
-        destination: dest_endpoint,
+        source,
+        destination,
     };
 
     // Perform pathfinding
@@ -601,7 +581,10 @@ async fn pathfind_command(
             if result.success {
                 print_path_result(&result);
             } else {
-                error!("❌ Pathfinding failed: {}", result.error.unwrap_or_else(|| "Unknown error".to_string()));
+                error!(
+                    "❌ Pathfinding failed: {}",
+                    result.error.unwrap_or_else(|| "Unknown error".to_string())
+                );
                 std::process::exit(1);
             }
         }
@@ -620,51 +603,136 @@ fn print_path_result(result: &trailfinder::pathfind::PathFindResult) {
 
     // Calculate column widths based on content
     let hop_width = std::cmp::max(3, result.total_hops.to_string().len());
-    let device_width = std::cmp::max(6, result.path.iter().map(|h| h.device.len()).max().unwrap_or(0));
-    let interface_width = std::cmp::max(9, result.path.iter().map(|h| h.interface.len()).max().unwrap_or(0));
-    let vlan_width = std::cmp::max(4, result.path.iter()
-        .map(|h| h.vlan.map_or(1, |v| v.to_string().len()))
-        .max().unwrap_or(1));
-    let gateway_width = std::cmp::max(7, result.path.iter()
-        .map(|h| h.gateway.as_ref().map_or(1, |g| g.len()))
-        .max().unwrap_or(1));
-    let network_width = std::cmp::max(7, result.path.iter().map(|h| h.network.len()).max().unwrap_or(0));
+    let device_width = std::cmp::max(
+        6,
+        result
+            .path
+            .iter()
+            .map(|h| h.device.len())
+            .max()
+            .unwrap_or(0),
+    );
+    let incoming_width = std::cmp::max(
+        8,
+        result
+            .path
+            .iter()
+            .map(|h| h.incoming_interface.as_ref().map_or(1, |i| i.len()))
+            .max()
+            .unwrap_or(1),
+    );
+    let in_vlan_width = std::cmp::max(
+        7,
+        result
+            .path
+            .iter()
+            .map(|h| h.incoming_vlan.map_or(1, |v| v.to_string().len()))
+            .max()
+            .unwrap_or(1),
+    );
+    let outgoing_width = std::cmp::max(
+        8,
+        result
+            .path
+            .iter()
+            .map(|h| h.outgoing_interface.len())
+            .max()
+            .unwrap_or(0),
+    );
+    let out_vlan_width = std::cmp::max(
+        8,
+        result
+            .path
+            .iter()
+            .map(|h| h.outgoing_vlan.map_or(1, |v| v.to_string().len()))
+            .max()
+            .unwrap_or(1),
+    );
+    let gateway_width = std::cmp::max(
+        7,
+        result
+            .path
+            .iter()
+            .map(|h| h.gateway.as_ref().map_or(1, |g| g.len()))
+            .max()
+            .unwrap_or(1),
+    );
+    let network_width = std::cmp::max(
+        7,
+        result
+            .path
+            .iter()
+            .map(|h| h.network.len())
+            .max()
+            .unwrap_or(0),
+    );
 
     // Print header
-    println!("{:<width_hop$}  {:<width_device$}  {:<width_interface$}  {:<width_vlan$}  {:<width_gateway$}  {:<width_network$}", 
-             "Hop", "Device", "Interface", "VLAN", "Gateway", "Network",
-             width_hop = hop_width,
-             width_device = device_width,
-             width_interface = interface_width,
-             width_vlan = vlan_width,
-             width_gateway = gateway_width,
-             width_network = network_width);
-    
+    println!(
+        "{:<width_hop$}  {:<width_device$}  {:<width_incoming$}  {:<width_in_vlan$}  {:<width_outgoing$}  {:<width_out_vlan$}  {:<width_gateway$}  {:<width_network$}",
+        "Hop",
+        "Device",
+        "Incoming",
+        "In-VLAN",
+        "Outgoing",
+        "Out-VLAN",
+        "Gateway",
+        "Network",
+        width_hop = hop_width,
+        width_device = device_width,
+        width_incoming = incoming_width,
+        width_in_vlan = in_vlan_width,
+        width_outgoing = outgoing_width,
+        width_out_vlan = out_vlan_width,
+        width_gateway = gateway_width,
+        width_network = network_width
+    );
+
     // Calculate total width for separator line
-    let total_width = hop_width + device_width + interface_width + vlan_width + gateway_width + network_width + 10; // +10 for double spaces
+    let total_width = hop_width
+        + device_width
+        + incoming_width
+        + in_vlan_width
+        + outgoing_width
+        + out_vlan_width
+        + gateway_width
+        + network_width
+        + 14; // +14 for double spaces
     println!("{}", "─".repeat(total_width));
 
     // Print each hop
     for (i, hop) in result.path.iter().enumerate() {
-        let hop_num = format!("{}", i + 1);
-        let vlan_str = hop.vlan.map_or_else(|| "-".to_string(), |v| v.to_string());
+        let hop_num = format!("{}", i);
+        let incoming_str = hop.incoming_interface.as_deref().unwrap_or("-");
+        let in_vlan_str = hop
+            .incoming_vlan
+            .map_or_else(|| "-".to_string(), |v| v.to_string());
+        let out_vlan_str = hop
+            .outgoing_vlan
+            .map_or_else(|| "-".to_string(), |v| v.to_string());
         let gateway_str = hop.gateway.as_deref().unwrap_or("-");
-        
-        println!("{:<width_hop$}  {:<width_device$}  {:<width_interface$}  {:<width_vlan$}  {:<width_gateway$}  {:<width_network$}",
-                 hop_num,
-                 hop.device,
-                 hop.interface,
-                 vlan_str,
-                 gateway_str,
-                 hop.network,
-                 width_hop = hop_width,
-                 width_device = device_width,
-                 width_interface = interface_width,
-                 width_vlan = vlan_width,
-                 width_gateway = gateway_width,
-                 width_network = network_width);
+
+        println!(
+            "{:<width_hop$}  {:<width_device$}  {:<width_incoming$}  {:<width_in_vlan$}  {:<width_outgoing$}  {:<width_out_vlan$}  {:<width_gateway$}  {:<width_network$}",
+            hop_num,
+            hop.device,
+            incoming_str,
+            in_vlan_str,
+            hop.outgoing_interface,
+            out_vlan_str,
+            gateway_str,
+            hop.network,
+            width_hop = hop_width,
+            width_device = device_width,
+            width_incoming = incoming_width,
+            width_in_vlan = in_vlan_width,
+            width_outgoing = outgoing_width,
+            width_out_vlan = out_vlan_width,
+            width_gateway = gateway_width,
+            width_network = network_width
+        );
     }
-    
+
     println!();
     info!("🎯 Path discovery completed successfully");
 }
