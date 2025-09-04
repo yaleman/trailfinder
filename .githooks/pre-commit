@@ -1,9 +1,10 @@
 #!/bin/bash
 
-RESULT=$(rg housenet.yaleman.org --no-ignore | rg -v ./states )
-LINES=$(echo "${RESULT}" | wc -l)
+RESULT=$(rg housenet.yaleman.org --no-ignore --glob '!states/' --glob '!target/' --glob '!.githooks/pre-commit' --glob '!devices.json' | sed -E '/^[[:space:]]*$/d')
+LINES=$(echo "${RESULT}" | grep -cv '^$' )
 
 if [ "$LINES" -gt 0 ]; then
-    echo "Found ${LINES}references to housenet.yaleman.org"
+    echo "Found ${LINES} references in the following files to housenet.yaleman.org, please replace them with the 'example.com' domain:"
+    echo "'${RESULT}'"
     exit 1
 fi
