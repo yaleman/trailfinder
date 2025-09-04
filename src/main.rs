@@ -166,9 +166,16 @@ async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         ip_address: None,
     }) {
         Commands::Web { port, address } => {
-            web_server_command(&app_config, &address, port)
-                .await
-                .map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
+            tokio::select! {
+                Ok(()) = tokio::signal::ctrl_c() => {
+                    info!("Quitting...");
+                }
+                Ok(()) = web_server_command(&app_config, &address, port) => {
+                    web_server_command(&app_config, &address, port)
+                        .await
+                        .map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
+                }
+            }
         }
         Commands::Identify {
             hostname,
