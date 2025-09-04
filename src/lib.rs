@@ -35,7 +35,7 @@ impl std::fmt::Display for DeviceType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum Owner {
     Unknown,
     Named(String),

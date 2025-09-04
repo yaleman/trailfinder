@@ -931,3 +931,498 @@ fn test_parse_mikrotik_identity() {
     let identity_output = "some other line\nanother line\n";
     assert!(mikrotik.parse_identity(identity_output).is_err());
 }
+
+#[test]
+fn test_mikrotik_device_new() {
+    let mikrotik = Mikrotik::new(
+        "router1.example.com".to_string(),
+        Some("test-router".to_string()),
+        Owner::Named("IT Dept".to_string()),
+        DeviceType::Switch,
+    );
+
+    assert_eq!(mikrotik.hostname, "router1.example.com");
+    assert_eq!(mikrotik.name, Some("test-router".to_string()));
+    assert_eq!(mikrotik.owner, Owner::Named("IT Dept".to_string()));
+    assert_eq!(mikrotik.device_type, DeviceType::Switch);
+    assert!(mikrotik.routes.is_empty());
+    assert!(mikrotik.interfaces.is_empty());
+    assert!(mikrotik.system_identity.is_none());
+}
+
+#[test]
+fn test_mikrotik_interface_by_name() {
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Add test interface
+    let test_interface = Interface {
+        interface_id: Uuid::new_v4(),
+        name: "ether1".to_string(),
+        vlans: Vec::new(),
+        addresses: Vec::new(),
+        interface_type: InterfaceType::Ethernet,
+        comment: None,
+        mac_address: None,
+        neighbour_string_data: std::collections::HashMap::new(),
+        peers: std::collections::HashMap::new(),
+    };
+
+    let interface_uuid = test_interface.interface_id;
+    mikrotik.interfaces.push(test_interface);
+
+    // Test finding existing interface
+    assert_eq!(mikrotik.interface_by_name("ether1"), Some(interface_uuid));
+
+    // Test non-existent interface
+    assert_eq!(mikrotik.interface_by_name("ether999"), None);
+}
+
+#[test]
+fn test_mikrotik_command_getters() {
+    let mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    assert_eq!(
+        mikrotik.get_cdp_command(),
+        "/ip neighbor print terse without-paging proplist=interface,address,mac-address,identity"
+    );
+    assert_eq!(
+        mikrotik.get_interfaces_command(),
+        "/interface print without-paging detail"
+    );
+    assert_eq!(
+        mikrotik.get_routes_command(),
+        "/ipv6 route print detail without-paging; /ip route print detail without-paging"
+    );
+    assert_eq!(
+        Mikrotik::GET_IP_COMMAND,
+        "/ip address print terse; /ipv6 address print terse"
+    );
+    assert_eq!(Mikrotik::GET_IDENTITY_COMMAND, "/system identity print");
+}
+
+#[test]
+fn test_mikrotik_build_device() {
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        Some("test-device".to_string()),
+        Owner::Named("Lab".to_string()),
+        DeviceType::Router,
+    );
+
+    // Add test data
+    mikrotik.system_identity = Some("TestMikroTik".to_string());
+
+    let device = mikrotik.build();
+
+    assert_eq!(device.hostname, "test.example.com");
+    assert_eq!(device.name, Some("test-device".to_string()));
+    assert_eq!(device.owner, Owner::Named("Lab".to_string()));
+    assert_eq!(device.device_type, DeviceType::Router);
+    assert_eq!(device.system_identity, Some("TestMikroTik".to_string()));
+}
+
+#[test]
+fn test_find_kv_function() {
+    let parts = vec![
+        "interface=ether1",
+        "address=192.168.1.1",
+        "name=\"Test Interface\"",
+    ];
+
+    assert_eq!(find_kv(&parts, "interface"), Some("ether1".to_string()));
+    assert_eq!(find_kv(&parts, "address"), Some("192.168.1.1".to_string()));
+    assert_eq!(find_kv(&parts, "name"), Some("Test Interface".to_string()));
+    assert_eq!(find_kv(&parts, "nonexistent"), None);
+
+    // Test with quoted values
+    let parts_quoted = vec!["comment=\"This is a test\"", "type=ether"];
+    assert_eq!(
+        find_kv(&parts_quoted, "comment"),
+        Some("This is a test".to_string())
+    );
+    assert_eq!(find_kv(&parts_quoted, "type"), Some("ether".to_string()));
+}
+
+#[test]
+fn test_mikrotik_parse_interfaces_edge_cases() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test empty input
+    assert!(mikrotik.parse_interfaces("").is_ok());
+    assert!(mikrotik.interfaces.is_empty());
+
+    // Test input with comments only
+    let comment_only = r#"# This is a comment
+;;; Another comment
+Flags: D - dynamic, X - disabled, R - running, S - slave
+"#;
+    assert!(mikrotik.parse_interfaces(comment_only).is_ok());
+    assert!(mikrotik.interfaces.is_empty());
+
+    // Test malformed interface data (missing required fields) - needs proper line ending
+    let malformed = " 0 invalid=data without=name\n\n";
+    assert!(mikrotik.parse_interfaces(malformed).is_err());
+}
+
+#[test]
+fn test_mikrotik_parse_routes_edge_cases() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test empty input
+    assert!(mikrotik.parse_routes("").is_ok());
+    assert!(mikrotik.routes.is_empty());
+
+    // Test input with flags header only
+    let flags_only = "Flags: X - disabled, A - active, D - dynamic, C - connect, S - static, r - rip, b - bgp, o - ospf, m - mme, B - blackhole, U - unreachable, P - prohibit";
+    assert!(mikrotik.parse_routes(flags_only).is_ok());
+    assert!(mikrotik.routes.is_empty());
+
+    // Test malformed route (missing dst-address)
+    let malformed = " 0 gateway=192.168.1.1 distance=1";
+    assert!(mikrotik.parse_routes(malformed).is_err());
+}
+
+#[test]
+fn test_mikrotik_parse_ip_addresses_edge_cases() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // First add an interface so addresses can be assigned
+    let test_interface = Interface {
+        interface_id: Uuid::new_v4(),
+        name: "ether1".to_string(),
+        vlans: Vec::new(),
+        addresses: Vec::new(),
+        interface_type: InterfaceType::Ethernet,
+        comment: None,
+        mac_address: None,
+        neighbour_string_data: std::collections::HashMap::new(),
+        peers: std::collections::HashMap::new(),
+    };
+    mikrotik.interfaces.push(test_interface);
+
+    // Test empty input
+    assert!(mikrotik.parse_ip_addresses("").is_ok());
+
+    // Test valid address with actual-interface
+    let valid_with_actual = "address=192.168.1.1/24 actual-interface=ether1";
+    assert!(mikrotik.parse_ip_addresses(valid_with_actual).is_ok());
+
+    // Test valid address with interface field (fallback)
+    let valid_with_interface = "address=192.168.2.1/24 interface=ether1";
+    assert!(mikrotik.parse_ip_addresses(valid_with_interface).is_ok());
+
+    // Test invalid address format (should continue, not fail)
+    let invalid_addr = "address=invalid_ip interface=ether1";
+    assert!(mikrotik.parse_ip_addresses(invalid_addr).is_ok());
+
+    // Test missing interface name (should continue, not fail)
+    let missing_interface = "address=192.168.3.1/24 other=field";
+    assert!(mikrotik.parse_ip_addresses(missing_interface).is_ok());
+}
+
+#[test]
+fn test_mikrotik_parse_neighbours_edge_cases() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Add test interface
+    let test_interface = Interface {
+        interface_id: Uuid::new_v4(),
+        name: "ether1".to_string(),
+        vlans: Vec::new(),
+        addresses: Vec::new(),
+        interface_type: InterfaceType::Ethernet,
+        comment: None,
+        mac_address: None,
+        neighbour_string_data: std::collections::HashMap::new(),
+        peers: std::collections::HashMap::new(),
+    };
+    mikrotik.interfaces.push(test_interface);
+
+    // Test empty input
+    let result = mikrotik.parse_neighbours("", vec![]);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+
+    // Test input with comments/headers only
+    let comment_input = r#"# Comment line
+Columns: INTERFACE-ID,INTERFACE,PEER-ADDRESS,PEER-MAC,PEER-IDENTITY"#;
+    let result = mikrotik.parse_neighbours(comment_input, vec![]);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+
+    // Test malformed neighbor data (regex doesn't match)
+    let malformed = "not a valid neighbor line";
+    let result = mikrotik.parse_neighbours(malformed, vec![]);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+
+    // Test neighbor data for non-existent interface
+    let nonexistent_interface = "0 nonexistent 192.168.1.1 AA:BB:CC:DD:EE:FF peer.example.com";
+    let result = mikrotik.parse_neighbours(nonexistent_interface, vec![]);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+}
+
+#[test]
+fn test_mikrotik_store_raw_cdp_data_edge_cases() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test empty input
+    let result = mikrotik.store_raw_cdp_data("");
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+
+    // Test invalid input (no digit at start)
+    let invalid_input = "not valid neighbor data";
+    let result = mikrotik.store_raw_cdp_data(invalid_input);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+
+    // Test missing interface or identity
+    let missing_data = "0 address=192.168.1.1 mac-address=AA:BB:CC:DD:EE:FF";
+    let result = mikrotik.store_raw_cdp_data(missing_data);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 0);
+}
+
+#[test]
+fn test_mikrotik_interface_parsing_with_vlans() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Switch,
+    );
+
+    // Test interface with VLAN - needs proper line ending
+    let vlan_interface = " 0 name=vlan100 type=vlan vlan_id=100\n\n";
+    assert!(mikrotik.parse_interfaces(vlan_interface).is_ok());
+    assert_eq!(mikrotik.interfaces.len(), 1);
+    assert_eq!(mikrotik.interfaces[0].name, "vlan100");
+    assert_eq!(mikrotik.interfaces[0].vlans, vec![100]);
+    assert!(matches!(
+        mikrotik.interfaces[0].interface_type,
+        InterfaceType::Vlan
+    ));
+}
+
+#[test]
+fn test_mikrotik_route_parsing_with_distances() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test route with distance
+    let route_with_distance = " 0 dst-address=192.168.10.0/24 gateway=192.168.1.1 distance=10";
+    assert!(mikrotik.parse_routes(route_with_distance).is_ok());
+    assert_eq!(mikrotik.routes.len(), 1);
+    assert_eq!(mikrotik.routes[0].distance, Some(10));
+}
+
+#[test]
+fn test_mikrotik_link_local_ipv6_filtering() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test that link-local IPv6 routes are filtered out
+    let link_local_route = " 0 dst-address=fe80::/10 gateway=fe80::1";
+    assert!(mikrotik.parse_routes(link_local_route).is_ok());
+    assert_eq!(mikrotik.routes.len(), 0); // Should be filtered out
+}
+
+#[test]
+fn test_mikrotik_interface_parsing_with_mac() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test interface with MAC address - needs proper line ending
+    let interface_with_mac = " 0 name=ether1 type=ether mac-address=AA:BB:CC:DD:EE:FF\n\n";
+    assert!(mikrotik.parse_interfaces(interface_with_mac).is_ok());
+    assert_eq!(mikrotik.interfaces.len(), 1);
+    assert!(mikrotik.interfaces[0].mac_address.is_some());
+
+    // Test with invalid MAC address format - needs proper line ending
+    let interface_with_invalid_mac = " 0 name=ether2 type=ether mac-address=invalid-mac\n\n";
+    assert!(
+        mikrotik
+            .parse_interfaces(interface_with_invalid_mac)
+            .is_ok()
+    );
+    assert_eq!(mikrotik.interfaces.len(), 2); // Should still parse interface
+    assert!(mikrotik.interfaces[1].mac_address.is_none()); // But MAC should be None
+}
+
+#[test]
+fn test_mikrotik_route_gateway_parsing() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test route with IP gateway
+    let route_with_ip_gw = " 0 dst-address=192.168.10.0/24 gateway=192.168.1.1";
+    assert!(mikrotik.parse_routes(route_with_ip_gw).is_ok());
+    assert_eq!(mikrotik.routes.len(), 1);
+    assert!(mikrotik.routes[0].gateway.is_some());
+
+    // Test route with immediate-gw containing IP and interface
+    let route_with_immediate_gw = " 0 dst-address=192.168.20.0/24 immediate-gw=192.168.1.2%ether1";
+    assert!(mikrotik.parse_routes(route_with_immediate_gw).is_ok());
+    assert_eq!(mikrotik.routes.len(), 2);
+}
+
+#[test]
+fn test_mikrotik_default_route_detection() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Test default route detection
+    let default_route = " 0 dst-address=0.0.0.0/0 gateway=192.168.1.1";
+    assert!(mikrotik.parse_routes(default_route).is_ok());
+    assert_eq!(mikrotik.routes.len(), 1);
+    assert!(matches!(
+        mikrotik.routes[0].route_type,
+        RouteType::Default(_)
+    ));
+}
+
+#[test]
+fn test_mikrotik_duplicate_address_handling() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Add interface
+    let mut test_interface = Interface {
+        interface_id: Uuid::new_v4(),
+        name: "ether1".to_string(),
+        vlans: Vec::new(),
+        addresses: Vec::new(),
+        interface_type: InterfaceType::Ethernet,
+        comment: None,
+        mac_address: None,
+        neighbour_string_data: std::collections::HashMap::new(),
+        peers: std::collections::HashMap::new(),
+    };
+
+    // Pre-populate with an address
+    use crate::InterfaceAddress;
+    let test_addr = InterfaceAddress::try_from("192.168.1.1/24").expect("Valid address");
+    test_interface.addresses.push(test_addr.clone());
+    mikrotik.interfaces.push(test_interface);
+
+    // Try to add the same address again - should be skipped
+    let duplicate_addr = "address=192.168.1.1/24 interface=ether1";
+    assert!(mikrotik.parse_ip_addresses(duplicate_addr).is_ok());
+
+    // Should still only have one address
+    assert_eq!(mikrotik.interfaces[0].addresses.len(), 1);
+}
+
+#[test]
+fn test_mikrotik_comma_separated_interfaces_in_cdp() {
+    crate::setup_test_logging();
+    let mut mikrotik = Mikrotik::new(
+        "test.example.com".to_string(),
+        None,
+        Owner::Unknown,
+        DeviceType::Router,
+    );
+
+    // Add multiple interfaces
+    let interfaces = vec!["sfp-sfpplus1", "bridge"];
+    for iface_name in interfaces {
+        let test_interface = Interface {
+            interface_id: Uuid::new_v4(),
+            name: iface_name.to_string(),
+            vlans: Vec::new(),
+            addresses: Vec::new(),
+            interface_type: InterfaceType::Ethernet,
+            comment: None,
+            mac_address: None,
+            neighbour_string_data: std::collections::HashMap::new(),
+            peers: std::collections::HashMap::new(),
+        };
+        mikrotik.interfaces.push(test_interface);
+    }
+
+    // Test comma-separated interface names in CDP data
+    let cdp_data = "0 interface=sfp-sfpplus1,bridge address=10.0.99.2 mac-address=A0:23:9F:7B:2E:33 identity=C3650.example.com";
+    let result = mikrotik.store_raw_cdp_data(cdp_data);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 2); // Should store data for both interfaces
+
+    // Verify both interfaces have the neighbor data
+    for interface in &mikrotik.interfaces {
+        if interface.name == "sfp-sfpplus1" || interface.name == "bridge" {
+            assert!(!interface.neighbour_string_data.is_empty());
+        }
+    }
+}
