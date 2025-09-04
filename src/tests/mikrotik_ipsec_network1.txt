@@ -1,0 +1,14 @@
+# sep/04/2025 13:50:36 by RouterOS 6.46.4
+# software id = IYQ9-4PAU
+#
+# model = 951Ui-2nD
+# serial number = asdfsafsdfasfd
+/ip ipsec peer add address=network0.example.com comment=network0 exchange-mode=ike2 name=network0 port=500 send-initial-contact=no
+/ip ipsec profile set [ find default=yes ] dh-group=modp2048 enc-algorithm=aes-256 hash-algorithm=sha256 lifetime=8h nat-traversal=no proposal-check=strict
+/ip ipsec proposal set [ find default=yes ] auth-algorithms=sha256 enc-algorithms=aes-256-cbc lifetime=8h pfs-group=modp2048
+/ip ipsec identity add my-id=fqdn:network1.example.com peer=network0 remote-id=fqdn:network0.example.com secret=8b94a43c50e8e5d32d3018
+/ip ipsec identity
+# Peer does not exist
+add my-id=fqdn:network1.example.com secret=8b94a43c50e8e5d32d3018
+/ip ipsec policy add dst-address=10.0.0.0/16 peer=network0 sa-dst-address=159.196.190.193 sa-src-address=0.0.0.0 src-address=10.1.0.0/16 tunnel=yes
+/ip ipsec policy add comment=network8.example.com dst-address=10.8.0.0/16 peer=network0 sa-dst-address=network8.example.com sa-src-address=network1.example.com src-address=10.1.0.0/16 tunnel=yes

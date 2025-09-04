@@ -1,0 +1,15 @@
+# 2025-09-04 13:56:20 by RouterOS 7.16.1
+# software id = 936G-CEJ0
+#
+# model = RB5009UG+S+
+# serial number = asdfasfsdafsdfafdsafdsaf
+/ip ipsec mode-config add address-pool=ipsec name=responder
+/ip ipsec peer add address=network1.example.com exchange-mode=ike2 name=network1.example.com port=500
+/ip ipsec peer add exchange-mode=ike2 name=network8.example.com passive=yes send-initial-contact=no
+/ip ipsec profile set [ find default=yes ] dh-group=modp2048 dpd-interval=2m dpd-maximum-failures=5 enc-algorithm=aes-256 hash-algorithm=sha256 lifetime=8h prf-algorithm=sha256 proposal-check=strict
+/ip ipsec proposal set [ find default=yes ] auth-algorithms=sha256 enc-algorithms=aes-256-cbc lifetime=8h pfs-group=modp2048
+/ip ipsec identity add generate-policy=port-strict my-id=fqdn:network0.example.com peer=network1.example.com remote-id=fqdn:network1.example.com
+/ip ipsec identity add generate-policy=port-override mode-config=responder my-id=fqdn:network0.example.com peer=network8.example.com remote-id=address:192.168.8.2
+/ip ipsec policy set 0 dst-address=0.0.0.0/16 src-address=0.0.0.0/16
+/ip ipsec policy add comment=network1 dst-address=10.1.0.0/16 src-address=10.0.0.0/16 template=yes
+/ip ipsec policy add comment=network8 dst-address=10.8.0.0/16 src-address=10.0.0.0/16 template=yes
