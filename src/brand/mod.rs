@@ -1,3 +1,5 @@
+//! Brand-specific modules
+
 pub mod cisco;
 pub mod mikrotik;
 pub(crate) mod prelude;

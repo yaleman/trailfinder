@@ -1,3 +1,5 @@
+//! CLI Handling module
+
 use std::{
     net::{IpAddr, SocketAddr},
     time::Duration,
