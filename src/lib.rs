@@ -732,7 +732,7 @@ pub mod neighbor_resolution {
                     }
                 }
 
-                // Handle Cisco CDP single-line format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
+                // Handle Cisco CDP single-line format: "MagickNet         Ten 1/1/3         102               R    MikroTik  vlan40"
                 if parts.len() >= 6
                     && !parts[0].starts_with("Device")
                     && !parts[0].starts_with("Capability")
@@ -768,7 +768,7 @@ pub mod neighbor_resolution {
                     return Some("unknown".to_string());
                 }
 
-                // Handle Cisco CDP format: "Housenet         Ten 1/1/3         102               R    MikroTik  vlan40"
+                // Handle Cisco CDP format: "MagickNet         Ten 1/1/3         102               R    MikroTik  vlan40"
                 // The last field might be the remote interface
                 if parts.len() >= 6
                     && !parts[0].starts_with("Device")

@@ -798,7 +798,7 @@ S     10.0.0.0/8 [1/0] via 192.168.1.254
         setup_test_logging();
 
         let input_data = r#"-------------------------
-Device ID: Housenet
+Device ID: MagickNet
 Entry address(es):
   IP address: 10.0.40.1
 Platform: MikroTik,  Capabilities: Router
@@ -811,7 +811,7 @@ Version :
 advertisement version: 1
 
 -------------------------
-Device ID: Housenet
+Device ID: MagickNet
 Entry address(es):
   IP address: 10.0.5.1
 Platform: MikroTik,  Capabilities: Router
@@ -824,7 +824,7 @@ Version :
 advertisement version: 1
 
 -------------------------
-Device ID: Housenet
+Device ID: MagickNet
 Entry address(es):
   IP address: 10.0.0.1
 Platform: MikroTik,  Capabilities: Router
@@ -837,7 +837,7 @@ Version :
 advertisement version: 1
 
 -------------------------
-Device ID: Housenet
+Device ID: MagickNet
 Entry address(es):
   IP address: 192.168.88.1
 Platform: MikroTik,  Capabilities: Router
