@@ -1,3 +1,6 @@
+//! Configuration-related things
+//!
+use std::collections::HashMap;
 use std::{
     collections::{HashSet, hash_map::DefaultHasher},
     fmt::Display,
@@ -18,6 +21,7 @@ fn default_ssh_port() -> NonZeroU16 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Device brand enumeration
 pub enum DeviceBrand {
     Unknown,
     Mikrotik,
@@ -53,7 +57,7 @@ pub struct DeviceConfig {
     pub ssh_username: Option<String>,
     #[serde(default = "default_ssh_port")]
     pub ssh_port: NonZeroU16,
-    pub ssh_key_path: Option<String>,
+    pub ssh_key_path: Option<PathBuf>,
     pub ssh_key_passphrase: Option<String>,
     pub last_interrogated: Option<String>, // ISO 8601 timestamp
     pub notes: Option<String>,
@@ -145,7 +149,7 @@ pub struct AppConfig {
     pub devices: Vec<DeviceConfig>,
     pub ssh_timeout_seconds: u64,
     pub use_ssh_agent: Option<bool>,
-    pub state_directory: Option<String>,
+    pub state_directory: Option<PathBuf>,
 }
 
 impl Default for AppConfig {
@@ -154,7 +158,7 @@ impl Default for AppConfig {
             devices: Vec::new(),
             ssh_timeout_seconds: 30,
             use_ssh_agent: None, // Default to using ssh-agent when None
-            state_directory: Some("states".to_string()),
+            state_directory: Some(PathBuf::from("states")),
         }
     }
 }
@@ -165,7 +169,7 @@ impl AppConfig {
         let mut config: AppConfig = serde_json::from_str(&content)?;
 
         // Validate that all devices have non-empty hostnames and unique names
-        let mut seen_hostnames = std::collections::HashSet::new();
+        let mut seen_hostnames = HashSet::new();
         for device_config in &config.devices {
             if device_config.hostname.trim().is_empty() {
                 return Err(
@@ -281,19 +285,14 @@ impl AppConfig {
         }
     }
 
-    pub fn get_state_directory(&self) -> &str {
-        self.state_directory.as_deref().unwrap_or("states")
+    pub fn get_state_directory(&self) -> &Path {
+        self.state_directory
+            .as_deref()
+            .unwrap_or_else(|| Path::new("states"))
     }
 
-    pub fn get_state_file_path(&self, hostname: &str) -> std::path::PathBuf {
-        std::path::Path::new(self.get_state_directory()).join(format!("{}.json", hostname))
-    }
-
-    /// Create a clone of this config with a different state directory for testing
-    pub fn with_state_directory(&self, state_dir: String) -> Self {
-        let mut config = self.clone();
-        config.state_directory = Some(state_dir);
-        config
+    pub fn get_state_file_path(&self, hostname: &str) -> PathBuf {
+        Path::new(self.get_state_directory()).join(format!("{}.json", hostname))
     }
 
     pub fn load_device_state(
@@ -311,7 +310,7 @@ impl AppConfig {
         hostname: &str,
         state: &DeviceState,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let state_dir = std::path::Path::new(self.get_state_directory());
+        let state_dir = Path::new(self.get_state_directory());
         if !state_dir.exists() {
             fs::create_dir_all(state_dir)?;
         }
@@ -324,11 +323,9 @@ impl AppConfig {
 
     pub fn load_all_device_states(
         &self,
-    ) -> Result<std::collections::HashMap<String, DeviceState>, Box<dyn std::error::Error>> {
-        use std::collections::HashMap;
-
+    ) -> Result<HashMap<String, DeviceState>, Box<dyn std::error::Error>> {
         let mut device_states = HashMap::new();
-        let state_dir = std::path::Path::new(self.get_state_directory());
+        let state_dir = Path::new(self.get_state_directory());
 
         if !state_dir.exists() {
             return Ok(device_states); // Return empty map if directory doesn't exist
@@ -352,21 +349,6 @@ impl AppConfig {
 
     pub fn has_state_file(&self, hostname: &str) -> bool {
         self.get_state_file_path(hostname).exists()
-    }
-
-    pub fn needs_state_update(
-        &self,
-        hostname: &str,
-        raw_config: &str,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        if !self.has_state_file(hostname) {
-            return Ok(true); // No state file, definitely need to create one
-        }
-
-        match self.load_device_state(hostname) {
-            Ok(state) => Ok(state.has_config_changed(raw_config)),
-            Err(_) => Ok(true), // Error loading state, assume we need update
-        }
     }
 
     /// Process SSH configurations for all devices during config loading
@@ -656,6 +638,8 @@ pub mod ssh {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::ssh::*;
 
     #[test]
@@ -677,7 +661,7 @@ Host *
         assert_eq!(example_config.user, Some("exampleuser".to_string()));
         assert_eq!(
             example_config.get_identity_files(),
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/example.com").to_string()
             )]
         );
@@ -688,7 +672,7 @@ Host *
             .expect("Should match wildcard config");
         assert_eq!(
             other_config.get_identity_files(),
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/other.com").to_string()
             )]
         );
@@ -700,14 +684,14 @@ Host *
             hostname: "example.com".to_string(),
             user: None,
             port: None,
-            identity_files: vec![std::path::PathBuf::from("~/.ssh/%h")],
+            identity_files: vec![PathBuf::from("~/.ssh/%h")],
             identities_only: None,
         };
 
         let identity_files = host_config.get_identity_files();
         assert_eq!(
             identity_files,
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/example.com").to_string()
             )]
         );
@@ -726,7 +710,7 @@ Host *
         assert_eq!(example_config.user, Some("exampleuser".to_string()));
         assert_eq!(
             example_config.get_identity_files(),
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/example.com").to_string()
             )]
         );
@@ -738,7 +722,7 @@ Host *
         assert_eq!(example2_config.user, Some("foo".to_string()));
         assert_eq!(
             example2_config.get_identity_files(),
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/example2.com").to_string()
             )]
         );
@@ -750,7 +734,7 @@ Host *
         assert_eq!(random_config.user, Some("foo".to_string()));
         assert_eq!(
             random_config.get_identity_files(),
-            vec![std::path::PathBuf::from(
+            vec![PathBuf::from(
                 shellexpand::tilde("~/.ssh/random.com").to_string()
             )]
         );
