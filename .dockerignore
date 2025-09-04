@@ -1,0 +1,4 @@
+.github
+*.json
+target/
+.playwright-mcp

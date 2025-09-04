@@ -38,3 +38,13 @@ clean:
 
 # Run all checks (clippy, fmt, test)
 check: fmt clippy test
+
+docker_build:
+    docker buildx build --load --tag ghcr.io/yaleman/trailfinder:latest .
+
+docker_run: docker_build
+    docker run --rm -it \
+        -p 8000:8000 \
+        --mount type=bind,src=$(pwd)/devices.json,target=/devices.json \
+        --mount type=bind,src=$(pwd)/states,target=/states \
+        ghcr.io/yaleman/trailfinder:latest
