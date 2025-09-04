@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::ssh::SshError;
 
 pub mod brand;
+pub mod cli;
 pub mod config;
 pub mod pathfind;
 pub mod ssh;
@@ -950,7 +951,7 @@ pub(crate) fn setup_test_logging() {
                 .with_target(true)
                 .with_thread_ids(false)
                 .with_level(true)
-                .with_writer(std::io::stdout),
+                .with_writer(std::io::stderr),
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();

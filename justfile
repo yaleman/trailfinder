@@ -51,5 +51,4 @@ docker_run: docker_build
 
 coverage:
     cargo tarpaulin --out Html
-    pause
     open tarpaulin-report.html
