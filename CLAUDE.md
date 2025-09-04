@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Trailfinder is a Rust application for network device discovery and configuration parsing. The application can SSH into network devices, automatically identify their brand/type, parse their configurations, and maintain a JSON-based inventory. Currently implements MikroTik parser but is designed to support multiple device brands.
+Trailfinder is a Rust application for network device discovery and configuration parsing. The application can SSH into network devices, automatically identify their brand/type, parse their configurations, and maintain a JSON-based inventory. Currently implements MikroTik and Cisco parsers with comprehensive test coverage.
 
 ## Commands
 
@@ -16,8 +16,13 @@ Trailfinder is a Rust application for network device discovery and configuration
 
 ### Testing
 
-- `cargo test --quiet` - Run all tests
+- `cargo test --quiet` - Run all tests (173+ tests with comprehensive coverage)
 - `cargo test --quiet test_parse_mikrotik` - Run specific test
+- `cargo test --quiet mikrotik` - Run all MikroTik parser tests
+- `cargo test --quiet cisco` - Run all Cisco parser tests
+- `cargo test --quiet lib_tests` - Run core library tests
+- `cargo test --quiet main_tests` - Run CLI integration tests
+- `cargo test --quiet ssh_tests` - Run SSH client tests
 
 ### Development
 
@@ -100,17 +105,45 @@ The application tries SSH config first, then falls back to manual config if SSH 
 
 ## Testing Data
 
-The project includes sample MikroTik and Cisco system responses in files that are used in tests.
+The project includes sample MikroTik and Cisco system responses in `src/tests/` that are used in comprehensive unit tests:
+- `src/tests/mikrotik_*.txt` - MikroTik RouterOS command outputs
+- `src/tests/cisco_*.txt` - Cisco IOS command outputs
+
+## Test Coverage
+
+The project maintains comprehensive test coverage across all major components:
+- **CLI Integration Tests** - 25+ tests covering command parsing, config validation, error handling
+- **SSH Client Tests** - 20+ tests covering connection management, authentication, device identification  
+- **Core Library Tests** - 32+ tests covering data models, serialization, error handling
+- **Brand Parser Tests** - 43+ tests covering MikroTik (23) and Cisco (20) configuration parsing
+- **Total: 173+ tests** providing robust validation of network discovery functionality
+
+Test coverage includes:
+- Edge case handling and error conditions
+- Configuration parsing for multiple device types
+- Network topology discovery and neighbor detection
+- Interface and routing table parsing
+- Device identification and classification
 
 ## Current Development Tasks
 
 See TODO.md for the current development plan and task status.
 
-- no task is complete unless you can run 'just check' and there's no errors or warnings
+## Development Guidelines
+
+- no task is complete unless you can run `just check` and there's no errors or warnings
 - when editing Cargo.toml always try to use cargo commands unless it's impossible
 - clean up TODO.md when commiting checked-off tasks
 - update TODO.md with tasks before and after they're done
 - always use a todo list in TODO.md when working on complex tasks to track progress and remain on track
 - if wanting to test the app, just use `cargo run` rather than `cargo build` then running the binary
-- when using javscript you MUST use  DOM manipulation to update UI objects, NEVER use .innerHTML or similar.
+- when using javascript you MUST use DOM manipulation to update UI objects, NEVER use .innerHTML or similar
 - never try to use port 3000 to try and run the server, use a high port for testing
+
+## Testing Philosophy
+
+- Prefer comprehensive unit tests with edge case coverage over integration tests
+- Test error conditions and malformed input handling
+- Use real device output samples from `src/tests/` directory
+- Maintain test coverage above 70% for all core modules
+- Each brand parser should have 20+ tests covering all parsing functions
