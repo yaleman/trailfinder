@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::{Device, DeviceType, Owner, TrailFinderError};
 
 fn default_ssh_port() -> NonZeroU16 {
+    #[allow(clippy::expect_used)]
     NonZeroU16::new(22).expect("22 is a valid non-zero port number")
 }
 
@@ -48,8 +49,11 @@ impl Display for DeviceBrand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     #[serde(default = "Uuid::new_v4")]
+    /// Internal device ID record
     pub device_id: Uuid,
+    /// IP address or hostname to connect to (used as human-facing identifier)
     pub hostname: String,
+    /// IP Address of the device (optional, if you want to use it instead)
     pub ip_address: Option<IpAddr>,
     pub brand: Option<DeviceBrand>,
     pub device_type: Option<DeviceType>,
@@ -147,9 +151,13 @@ impl DeviceState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Application configuration, loaded from [super::cli::DEFAULT_CONFIG_FILE] by default.
 pub struct AppConfig {
+    /// The devices that are polled for details
     pub devices: Vec<DeviceConfig>,
+    /// SSH connection timeout in seconds, affects all devices
     pub ssh_timeout_seconds: u64,
+    /// Attempt to use SSH agent authentication (flaky)
     pub use_ssh_agent: Option<bool>,
+    /// Where we keep the device state files
     pub state_directory: Option<PathBuf>,
 }
 

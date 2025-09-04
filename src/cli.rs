@@ -101,6 +101,12 @@ enum Commands {
         #[arg(long)]
         dest_vlan: Option<u16>,
     },
+    /// Show the parsed application configuration
+    ConfigDump {
+        /// Pretty print the JSON output
+        #[arg(short, long)]
+        pretty: bool,
+    },
 }
 
 pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
@@ -117,6 +123,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             fmt::layer()
+                .with_writer(std::io::stderr)
                 .with_target(cli.debug)
                 .with_thread_ids(false)
                 .with_level(true),
@@ -231,6 +238,9 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         }
+        Commands::ConfigDump { pretty } => {
+            config_dump_command(&app_config, pretty)?;
+        }
     }
 
     Ok(())
@@ -289,10 +299,22 @@ async fn identify_command(
                     ..Default::default()
                 }
             } else {
-                app_config.get_device(&hostname).cloned().unwrap()
+                match app_config.get_device(&hostname) {
+                    Some(device) => device.clone(),
+                    None => {
+                        error!("Device '{}' not found in configuration, skipping", hostname);
+                        continue;
+                    }
+                }
             }
         } else {
-            app_config.get_device(&hostname).cloned().unwrap()
+            match app_config.get_device(&hostname) {
+                Some(device) => device.clone(),
+                None => {
+                    error!("Device '{}' not found in configuration, skipping", hostname);
+                    continue;
+                }
+            }
         };
 
         // Apply CLI-provided SSH parameters (override config values)
@@ -750,6 +772,19 @@ fn print_path_result(result: &crate::pathfind::PathFindResult) {
     info!("🎯 Path discovery completed successfully");
 }
 
+fn config_dump_command(
+    app_config: &AppConfig,
+    pretty: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output = if pretty {
+        serde_json::to_string_pretty(app_config)?
+    } else {
+        serde_json::to_string(app_config)?
+    };
+    println!("{}", output);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,6 +1222,47 @@ mod tests {
         // Version flag causes early exit, so this would be an "error" in try_parse_from
         // but it's the expected behavior
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_parsing_config_dump_command() {
+        // Test config-dump command with pretty flag
+        let args = vec!["trailfinder", "config-dump", "--pretty"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::ConfigDump { pretty } => {
+                assert!(pretty);
+            }
+            _ => panic!("Expected ConfigDump command"),
+        }
+
+        // Test config-dump command without pretty flag
+        let args = vec!["trailfinder", "config-dump"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::ConfigDump { pretty } => {
+                assert!(!pretty);
+            }
+            _ => panic!("Expected ConfigDump command"),
+        }
+    }
+
+    #[test]
+    fn test_config_dump_command_execution() {
+        let config = AppConfig::default();
+
+        // Test that the function doesn't panic and produces valid JSON
+        let result = config_dump_command(&config, false);
+        assert!(result.is_ok());
+
+        let result = config_dump_command(&config, true);
+        assert!(result.is_ok());
     }
 
     #[test]

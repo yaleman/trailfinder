@@ -6,8 +6,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use super::prelude::*;
-use crate::{InterfaceAddress, IpsecPeer};
 use crate::config::{DeviceConfig, DeviceState};
+use crate::{InterfaceAddress, IpsecPeer};
 
 use crate::ssh::SshClient;
 
@@ -61,6 +61,7 @@ impl DeviceHandler for Mikrotik {
     fn parse_interfaces(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
         debug!("input_data: {input_data}");
 
+        #[allow(clippy::expect_used)]
         let comment_finder = regex::Regex::new(r#";;; (?P<comment>.*?) name=""#)
             .expect("Failed to compile comment-finder regex");
 
@@ -524,24 +525,24 @@ impl DeviceHandler for Mikrotik {
     }
 
     fn parse_ipsec(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
+        use crate::{IpsecExchangeMode, IpsecPeer};
+        use cidr::IpCidr;
         use std::net::IpAddr;
         use std::str::FromStr;
-        use cidr::IpCidr;
-        use crate::{IpsecPeer, IpsecExchangeMode};
-        
+
         for line in input_data.lines() {
             let line = line.trim();
-            
+
             if line.starts_with("/ip ipsec peer add") {
                 // Parse peer definition
                 // Example: /ip ipsec peer add address=network0.example.com comment=network0 exchange-mode=ike2 name=network0 port=500
-                
+
                 let mut peer_name = String::new();
                 let mut remote_address = None;
                 let mut remote_hostname = None;
                 let mut exchange_mode = None;
                 let mut comment = None;
-                
+
                 // Split line and parse parameters
                 for part in line.split_whitespace() {
                     if let Some(value) = part.strip_prefix("name=") {
@@ -563,7 +564,7 @@ impl DeviceHandler for Mikrotik {
                         comment = Some(value.to_string());
                     }
                 }
-                
+
                 if !peer_name.is_empty() {
                     let peer = IpsecPeer {
                         peer_name: peer_name.clone(),
@@ -582,11 +583,11 @@ impl DeviceHandler for Mikrotik {
             } else if line.starts_with("/ip ipsec identity add") {
                 // Parse identity configuration to get local/remote IDs
                 // Example: /ip ipsec identity add my-id=fqdn:network8.example.com peer=network0 remote-id=fqdn:network0.example.com
-                
+
                 let mut peer_ref = String::new();
                 let mut local_id = None;
                 let mut remote_id = None;
-                
+
                 for part in line.split_whitespace() {
                     if let Some(value) = part.strip_prefix("peer=") {
                         peer_ref = value.to_string();
@@ -596,20 +597,24 @@ impl DeviceHandler for Mikrotik {
                         remote_id = Some(value.to_string());
                     }
                 }
-                
+
                 // Find existing peer and update identities
-                if let Some(peer) = self.ipsec_peers.iter_mut().find(|p| p.peer_name == peer_ref) {
+                if let Some(peer) = self
+                    .ipsec_peers
+                    .iter_mut()
+                    .find(|p| p.peer_name == peer_ref)
+                {
                     peer.local_identity = local_id;
                     peer.remote_identity = remote_id;
                 }
             } else if line.starts_with("/ip ipsec policy add") {
                 // Parse policy to get network ranges
                 // Example: /ip ipsec policy add dst-address=10.0.0.0/16 peer=network0 src-address=10.1.0.0/16 tunnel=yes
-                
+
                 let mut peer_ref = String::new();
                 let mut src_network = None;
                 let mut dst_network = None;
-                
+
                 for part in line.split_whitespace() {
                     if let Some(value) = part.strip_prefix("peer=") {
                         peer_ref = value.to_string();
@@ -618,25 +623,32 @@ impl DeviceHandler for Mikrotik {
                             src_network = Some(cidr);
                         }
                     } else if let Some(value) = part.strip_prefix("dst-address=")
-                        && let Ok(cidr) = IpCidr::from_str(value) {
-                            dst_network = Some(cidr);
-                        }
+                        && let Ok(cidr) = IpCidr::from_str(value)
+                    {
+                        dst_network = Some(cidr);
+                    }
                 }
-                
+
                 // Find existing peer and add networks
-                if let Some(peer) = self.ipsec_peers.iter_mut().find(|p| p.peer_name == peer_ref) {
+                if let Some(peer) = self
+                    .ipsec_peers
+                    .iter_mut()
+                    .find(|p| p.peer_name == peer_ref)
+                {
                     if let Some(src) = src_network
-                        && !peer.local_networks.contains(&src) {
-                            peer.local_networks.push(src);
-                        }
+                        && !peer.local_networks.contains(&src)
+                    {
+                        peer.local_networks.push(src);
+                    }
                     if let Some(dst) = dst_network
-                        && !peer.remote_networks.contains(&dst) {
-                            peer.remote_networks.push(dst);
-                        }
+                        && !peer.remote_networks.contains(&dst)
+                    {
+                        peer.remote_networks.push(dst);
+                    }
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -1577,27 +1589,40 @@ fn test_ipsec_parse_network0_hub_router() {
 
     let result = mikrotik.parse_ipsec(&ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     // Should have 2 peers: network1 and network8
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
+
     // Check network1 peer
-    let network1_peer = mikrotik.ipsec_peers.iter()
+    let network1_peer = mikrotik
+        .ipsec_peers
+        .iter()
         .find(|p| p.peer_name == "network1.example.com");
     assert!(network1_peer.is_some(), "Should find network1 peer");
     let network1_peer = network1_peer.unwrap();
-    
-    assert_eq!(network1_peer.remote_hostname, Some("network1.example.com".to_string()));
-    assert_eq!(network1_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
+
+    assert_eq!(
+        network1_peer.remote_hostname,
+        Some("network1.example.com".to_string())
+    );
+    assert_eq!(
+        network1_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
     assert!(!network1_peer.passive);
-    
+
     // Check network8 peer
-    let network8_peer = mikrotik.ipsec_peers.iter()
+    let network8_peer = mikrotik
+        .ipsec_peers
+        .iter()
         .find(|p| p.peer_name == "network8.example.com");
     assert!(network8_peer.is_some(), "Should find network8 peer");
     let network8_peer = network8_peer.unwrap();
-    
-    assert_eq!(network8_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
+
+    assert_eq!(
+        network8_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
     assert!(!network8_peer.passive);
 }
 
@@ -1618,14 +1643,20 @@ fn test_ipsec_parse_network1_spoke_router() {
 
     let result = mikrotik.parse_ipsec(&ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     // Should have 1 peer: network0
     assert_eq!(mikrotik.ipsec_peers.len(), 1);
-    
+
     let network0_peer = &mikrotik.ipsec_peers[0];
     assert_eq!(network0_peer.peer_name, "network0");
-    assert_eq!(network0_peer.remote_hostname, Some("network0.example.com".to_string()));
-    assert_eq!(network0_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
+    assert_eq!(
+        network0_peer.remote_hostname,
+        Some("network0.example.com".to_string())
+    );
+    assert_eq!(
+        network0_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
     assert_eq!(network0_peer.comment, Some("network0".to_string()));
 }
 
@@ -1646,14 +1677,20 @@ fn test_ipsec_parse_network8_spoke_router() {
 
     let result = mikrotik.parse_ipsec(&ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     // Should have 1 peer: network0
     assert_eq!(mikrotik.ipsec_peers.len(), 1);
-    
+
     let network0_peer = &mikrotik.ipsec_peers[0];
     assert_eq!(network0_peer.peer_name, "network0");
-    assert_eq!(network0_peer.remote_hostname, Some("network0.example.com".to_string()));
-    assert_eq!(network0_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
+    assert_eq!(
+        network0_peer.remote_hostname,
+        Some("network0.example.com".to_string())
+    );
+    assert_eq!(
+        network0_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
 }
 
 #[test]
@@ -1673,10 +1710,16 @@ fn test_ipsec_parse_identity_information() {
 
     let result = mikrotik.parse_ipsec(&ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     let network0_peer = &mikrotik.ipsec_peers[0];
-    assert_eq!(network0_peer.local_identity, Some("fqdn:network1.example.com".to_string()));
-    assert_eq!(network0_peer.remote_identity, Some("fqdn:network0.example.com".to_string()));
+    assert_eq!(
+        network0_peer.local_identity,
+        Some("fqdn:network1.example.com".to_string())
+    );
+    assert_eq!(
+        network0_peer.remote_identity,
+        Some("fqdn:network0.example.com".to_string())
+    );
 }
 
 #[test]
@@ -1696,24 +1739,39 @@ fn test_ipsec_parse_policy_networks() {
 
     let result = mikrotik.parse_ipsec(&ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     let network0_peer = &mikrotik.ipsec_peers[0];
-    
+
     // Check local networks (src-address)
     assert!(!network0_peer.local_networks.is_empty());
-    let local_10_1 = network0_peer.local_networks.iter()
+    let local_10_1 = network0_peer
+        .local_networks
+        .iter()
         .find(|net| net.to_string() == "10.1.0.0/16");
-    assert!(local_10_1.is_some(), "Should find local network 10.1.0.0/16");
-    
+    assert!(
+        local_10_1.is_some(),
+        "Should find local network 10.1.0.0/16"
+    );
+
     // Check remote networks (dst-address)
     assert!(!network0_peer.remote_networks.is_empty());
-    let remote_10_0 = network0_peer.remote_networks.iter()
+    let remote_10_0 = network0_peer
+        .remote_networks
+        .iter()
         .find(|net| net.to_string() == "10.0.0.0/16");
-    let remote_10_8 = network0_peer.remote_networks.iter()
+    let remote_10_8 = network0_peer
+        .remote_networks
+        .iter()
         .find(|net| net.to_string() == "10.8.0.0/16");
-    
-    assert!(remote_10_0.is_some(), "Should find remote network 10.0.0.0/16");
-    assert!(remote_10_8.is_some(), "Should find remote network 10.8.0.0/16");
+
+    assert!(
+        remote_10_0.is_some(),
+        "Should find remote network 10.0.0.0/16"
+    );
+    assert!(
+        remote_10_8.is_some(),
+        "Should find remote network 10.8.0.0/16"
+    );
 }
 
 #[test]
@@ -1776,12 +1834,20 @@ fn test_ipsec_parse_ip_addresses() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "IP address parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let peer1 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer1").unwrap();
+
+    let peer1 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer1")
+        .unwrap();
     assert_eq!(peer1.remote_address, Some("192.168.1.1".parse().unwrap()));
     assert_eq!(peer1.remote_hostname, None);
-    
-    let peer2 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer2").unwrap();
+
+    let peer2 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer2")
+        .unwrap();
     assert_eq!(peer2.remote_address, Some("10.0.0.1".parse().unwrap()));
     assert_eq!(peer2.exchange_mode, Some(crate::IpsecExchangeMode::Ike));
 }
@@ -1807,17 +1873,36 @@ fn test_ipsec_exchange_mode_parsing() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Exchange mode parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 4);
-    
-    let ike_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "ike_peer").unwrap();
+
+    let ike_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "ike_peer")
+        .unwrap();
     assert_eq!(ike_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike));
-    
-    let ike2_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "ike2_peer").unwrap();
-    assert_eq!(ike2_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
-    
-    let unknown_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "unknown_peer").unwrap();
+
+    let ike2_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "ike2_peer")
+        .unwrap();
+    assert_eq!(
+        ike2_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
+
+    let unknown_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "unknown_peer")
+        .unwrap();
     assert_eq!(unknown_peer.exchange_mode, None);
-    
-    let no_mode_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "no_mode_peer").unwrap();
+
+    let no_mode_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "no_mode_peer")
+        .unwrap();
     assert_eq!(no_mode_peer.exchange_mode, None);
 }
 
@@ -1841,19 +1926,31 @@ fn test_ipsec_policy_network_parsing() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Policy network parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 1);
-    
+
     let peer = &mikrotik.ipsec_peers[0];
     assert_eq!(peer.local_networks.len(), 2);
     assert_eq!(peer.remote_networks.len(), 2);
-    
+
     // Check that networks are properly parsed
-    let local_192 = peer.local_networks.iter().find(|net| net.to_string() == "192.168.1.0/24");
-    let local_172 = peer.local_networks.iter().find(|net| net.to_string() == "172.16.0.0/12");
+    let local_192 = peer
+        .local_networks
+        .iter()
+        .find(|net| net.to_string() == "192.168.1.0/24");
+    let local_172 = peer
+        .local_networks
+        .iter()
+        .find(|net| net.to_string() == "172.16.0.0/12");
     assert!(local_192.is_some());
     assert!(local_172.is_some());
-    
-    let remote_10 = peer.remote_networks.iter().find(|net| net.to_string() == "10.0.0.0/8");
-    let remote_192 = peer.remote_networks.iter().find(|net| net.to_string() == "192.168.0.0/16");
+
+    let remote_10 = peer
+        .remote_networks
+        .iter()
+        .find(|net| net.to_string() == "10.0.0.0/8");
+    let remote_192 = peer
+        .remote_networks
+        .iter()
+        .find(|net| net.to_string() == "192.168.0.0/16");
     assert!(remote_10.is_some());
     assert!(remote_192.is_some());
 }
@@ -1878,7 +1975,7 @@ fn test_ipsec_duplicate_network_handling() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Duplicate network handling should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 1);
-    
+
     let peer = &mikrotik.ipsec_peers[0];
     // Should only have one instance of each network despite duplicates
     assert_eq!(peer.local_networks.len(), 1);
@@ -1909,14 +2006,34 @@ fn test_ipsec_identity_peer_matching() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Identity peer matching should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let peer1 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer1").unwrap();
-    assert_eq!(peer1.local_identity, Some("fqdn:local1.example.com".to_string()));
-    assert_eq!(peer1.remote_identity, Some("fqdn:remote1.example.com".to_string()));
-    
-    let peer2 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer2").unwrap();
-    assert_eq!(peer2.local_identity, Some("fqdn:local2.example.com".to_string()));
-    assert_eq!(peer2.remote_identity, Some("fqdn:remote2.example.com".to_string()));
+
+    let peer1 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer1")
+        .unwrap();
+    assert_eq!(
+        peer1.local_identity,
+        Some("fqdn:local1.example.com".to_string())
+    );
+    assert_eq!(
+        peer1.remote_identity,
+        Some("fqdn:remote1.example.com".to_string())
+    );
+
+    let peer2 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer2")
+        .unwrap();
+    assert_eq!(
+        peer2.local_identity,
+        Some("fqdn:local2.example.com".to_string())
+    );
+    assert_eq!(
+        peer2.remote_identity,
+        Some("fqdn:remote2.example.com".to_string())
+    );
 }
 
 #[test]
@@ -1941,15 +2058,23 @@ fn test_ipsec_policy_peer_matching() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Policy peer matching should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let peer1 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer1").unwrap();
+
+    let peer1 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer1")
+        .unwrap();
     assert_eq!(peer1.local_networks.len(), 1);
     assert_eq!(peer1.local_networks[0].to_string(), "10.1.0.0/16");
-    
-    let peer2 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer2").unwrap();
+
+    let peer2 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer2")
+        .unwrap();
     assert_eq!(peer2.local_networks.len(), 1);
     assert_eq!(peer2.local_networks[0].to_string(), "10.2.0.0/16");
-    
+
     // Both peers should have the same remote network
     assert_eq!(peer1.remote_networks.len(), 1);
     assert_eq!(peer2.remote_networks.len(), 1);
@@ -1976,13 +2101,19 @@ fn test_ipsec_comment_parsing() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Comment parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let peer_with_comment = mikrotik.ipsec_peers.iter()
-        .find(|p| p.peer_name == "peer_with_comment").unwrap();
+
+    let peer_with_comment = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer_with_comment")
+        .unwrap();
     assert_eq!(peer_with_comment.comment, Some("\"Test".to_string()));
-    
-    let peer_no_comment = mikrotik.ipsec_peers.iter()
-        .find(|p| p.peer_name == "peer_no_comment").unwrap();
+
+    let peer_no_comment = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer_no_comment")
+        .unwrap();
     assert_eq!(peer_no_comment.comment, None);
 }
 
@@ -2003,11 +2134,14 @@ fn test_ipsec_build_device_with_peers() {
 
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "IPSec parsing should succeed");
-    
+
     let device = mikrotik.build();
     assert_eq!(device.ipsec_peers.len(), 1);
     assert_eq!(device.ipsec_peers[0].peer_name, "testpeer");
-    assert_eq!(device.ipsec_peers[0].remote_address, Some("192.168.1.1".parse().unwrap()));
+    assert_eq!(
+        device.ipsec_peers[0].remote_address,
+        Some("192.168.1.1".parse().unwrap())
+    );
 }
 
 #[test]
@@ -2041,11 +2175,19 @@ fn test_ipsec_passive_flag_parsing() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Passive flag parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let active_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "active_peer").unwrap();
+
+    let active_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "active_peer")
+        .unwrap();
     assert!(!active_peer.passive);
-    
-    let passive_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "passive_peer").unwrap();
+
+    let passive_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "passive_peer")
+        .unwrap();
     // Note: Current implementation doesn't parse passive flag, defaults to false
     // This test documents current behavior - could be enhanced later
     assert!(!passive_peer.passive);
@@ -2081,27 +2223,60 @@ fn test_ipsec_complex_parsing_scenario() {
     let result = mikrotik.parse_ipsec(complex_ipsec_input);
     assert!(result.is_ok(), "Complex IPSec parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 3);
-    
+
     // Verify hub peer
-    let hub_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "hub").unwrap();
-    assert_eq!(hub_peer.remote_hostname, Some("hub.example.com".to_string()));
+    let hub_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "hub")
+        .unwrap();
+    assert_eq!(
+        hub_peer.remote_hostname,
+        Some("hub.example.com".to_string())
+    );
     assert_eq!(hub_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
-    assert_eq!(hub_peer.local_identity, Some("fqdn:local.example.com".to_string()));
-    assert_eq!(hub_peer.remote_identity, Some("fqdn:hub.example.com".to_string()));
+    assert_eq!(
+        hub_peer.local_identity,
+        Some("fqdn:local.example.com".to_string())
+    );
+    assert_eq!(
+        hub_peer.remote_identity,
+        Some("fqdn:hub.example.com".to_string())
+    );
     assert_eq!(hub_peer.local_networks.len(), 1);
     assert_eq!(hub_peer.remote_networks.len(), 1);
-    
+
     // Verify spoke1 peer
-    let spoke1_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "spoke1").unwrap();
-    assert_eq!(spoke1_peer.remote_address, Some("10.1.1.1".parse().unwrap()));
-    assert_eq!(spoke1_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike));
+    let spoke1_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "spoke1")
+        .unwrap();
+    assert_eq!(
+        spoke1_peer.remote_address,
+        Some("10.1.1.1".parse().unwrap())
+    );
+    assert_eq!(
+        spoke1_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike)
+    );
     assert_eq!(spoke1_peer.local_networks.len(), 1); // Same src-address in multiple policies
     assert_eq!(spoke1_peer.remote_networks.len(), 2); // Two different dst-addresses
-    
+
     // Verify spoke2 peer
-    let spoke2_peer = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "spoke2").unwrap();
-    assert_eq!(spoke2_peer.remote_hostname, Some("spoke2.domain.com".to_string()));
-    assert_eq!(spoke2_peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
+    let spoke2_peer = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "spoke2")
+        .unwrap();
+    assert_eq!(
+        spoke2_peer.remote_hostname,
+        Some("spoke2.domain.com".to_string())
+    );
+    assert_eq!(
+        spoke2_peer.exchange_mode,
+        Some(crate::IpsecExchangeMode::Ike2)
+    );
     assert_eq!(spoke2_peer.local_networks.len(), 1);
     assert_eq!(spoke2_peer.remote_networks.len(), 1);
 }
@@ -2127,8 +2302,12 @@ fn test_ipsec_whitespace_and_formatting_robustness() {
     let result = mikrotik.parse_ipsec(messy_ipsec_input);
     assert!(result.is_ok(), "Messy whitespace parsing should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 2);
-    
-    let peer1 = mikrotik.ipsec_peers.iter().find(|p| p.peer_name == "peer1").unwrap();
+
+    let peer1 = mikrotik
+        .ipsec_peers
+        .iter()
+        .find(|p| p.peer_name == "peer1")
+        .unwrap();
     assert_eq!(peer1.remote_address, Some("1.2.3.4".parse().unwrap()));
     assert_eq!(peer1.local_identity, Some("fqdn:test1.com".to_string()));
     assert_eq!(peer1.local_networks.len(), 1);
@@ -2156,15 +2335,21 @@ fn test_ipsec_invalid_cidr_handling() {
     let result = mikrotik.parse_ipsec(ipsec_input);
     assert!(result.is_ok(), "Invalid CIDR handling should succeed");
     assert_eq!(mikrotik.ipsec_peers.len(), 1);
-    
+
     let peer = &mikrotik.ipsec_peers[0];
     // Should only have the valid CIDR entries
     assert_eq!(peer.local_networks.len(), 2); // 192.168.1.0/24 and 192.168.2.0/24
     assert_eq!(peer.remote_networks.len(), 2); // 10.0.0.0/8 and 172.16.0.0/12
-    
+
     // Check that the valid local networks are present
-    let has_192_168_1 = peer.local_networks.iter().any(|net| net.to_string() == "192.168.1.0/24");
-    let has_192_168_2 = peer.local_networks.iter().any(|net| net.to_string() == "192.168.2.0/24");
+    let has_192_168_1 = peer
+        .local_networks
+        .iter()
+        .any(|net| net.to_string() == "192.168.1.0/24");
+    let has_192_168_2 = peer
+        .local_networks
+        .iter()
+        .any(|net| net.to_string() == "192.168.2.0/24");
     assert!(has_192_168_1, "Should find 192.168.1.0/24");
     assert!(has_192_168_2, "Should find 192.168.2.0/24");
 }
@@ -2186,33 +2371,52 @@ fn test_ipsec_integration_into_device_workflow() {
     );
 
     // Simulate the full parsing workflow as would happen in interrogate_device
-    
+
     // 1. Parse interfaces (simulate with empty data for this test)
-    mikrotik.parse_interfaces("").expect("Interface parsing should succeed");
-    
-    // 2. Parse routes (simulate with empty data for this test)  
-    mikrotik.parse_routes("").expect("Route parsing should succeed");
-    
+    mikrotik
+        .parse_interfaces("")
+        .expect("Interface parsing should succeed");
+
+    // 2. Parse routes (simulate with empty data for this test)
+    mikrotik
+        .parse_routes("")
+        .expect("Route parsing should succeed");
+
     // 3. Parse identity (provide minimal valid data)
-    mikrotik.parse_identity("name: test-router").expect("Identity parsing should succeed");
-    
+    mikrotik
+        .parse_identity("name: test-router")
+        .expect("Identity parsing should succeed");
+
     // 4. Parse IP addresses (simulate with empty data for this test)
-    mikrotik.parse_ip_addresses("").expect("IP address parsing should succeed");
-    
+    mikrotik
+        .parse_ip_addresses("")
+        .expect("IP address parsing should succeed");
+
     // 5. Parse IPSec - this is the main focus of the test
-    mikrotik.parse_ipsec(&ipsec_input).expect("IPSec parsing should succeed");
-    
+    mikrotik
+        .parse_ipsec(&ipsec_input)
+        .expect("IPSec parsing should succeed");
+
     // 6. Build the device - this should include IPSec peers
     let device = mikrotik.build();
-    
+
     // Verify IPSec data is properly integrated into the device
     assert_eq!(device.ipsec_peers.len(), 1);
     let peer = &device.ipsec_peers[0];
     assert_eq!(peer.peer_name, "network0");
-    assert_eq!(peer.remote_hostname, Some("network0.example.com".to_string()));
+    assert_eq!(
+        peer.remote_hostname,
+        Some("network0.example.com".to_string())
+    );
     assert_eq!(peer.exchange_mode, Some(crate::IpsecExchangeMode::Ike2));
-    assert_eq!(peer.local_identity, Some("fqdn:network1.example.com".to_string()));
-    assert_eq!(peer.remote_identity, Some("fqdn:network0.example.com".to_string()));
+    assert_eq!(
+        peer.local_identity,
+        Some("fqdn:network1.example.com".to_string())
+    );
+    assert_eq!(
+        peer.remote_identity,
+        Some("fqdn:network0.example.com".to_string())
+    );
     assert!(!peer.local_networks.is_empty());
     assert!(!peer.remote_networks.is_empty());
 }

@@ -51,13 +51,13 @@ fn create_test_route(target: &str, gateway: Option<&str>, interface_id: uuid::Uu
     }
 }
 
-fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
+fn build_test_topology(device_states: &[DeviceState]) -> NetworkTopology {
     let mut devices = Vec::new();
     let mut connections = Vec::new();
     let mut networks = HashMap::new();
 
     // Convert device states to network devices
-    for device_state in &device_states {
+    for device_state in device_states {
         devices.push(NetworkDevice {
             device_id: device_state.device.device_id.to_string(),
             hostname: device_state.device.hostname.clone(),
@@ -120,7 +120,7 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
                 let mut gateway_found = false;
 
                 // Look for devices that have this gateway IP as an interface
-                for other_device in &device_states {
+                for other_device in device_states {
                     if other_device.device.hostname == device_state.device.hostname {
                         continue;
                     }
@@ -165,7 +165,7 @@ fn build_test_topology(device_states: Vec<DeviceState>) -> NetworkTopology {
             for (peer_connection, peer_interface_ids) in &interface.peers {
                 for peer_interface_id in peer_interface_ids {
                     // Find the peer interface in other devices
-                    for other_device in &device_states {
+                    for other_device in device_states {
                         if other_device.device.hostname == device_state.device.hostname {
                             continue;
                         }
@@ -231,7 +231,7 @@ fn test_topology_without_external_gateways() {
         ],
     );
 
-    let topology = build_test_topology(vec![device1]);
+    let topology = build_test_topology(&[device1]);
 
     // Should not create internet node
     assert_eq!(topology.devices.len(), 1);
@@ -266,7 +266,7 @@ fn test_topology_with_internal_gateway() {
         None,
     ));
 
-    let topology = build_test_topology(vec![device1, device2]);
+    let topology = build_test_topology(&[device1, device2]);
 
     // Should create connection between devices, but no internet node
     assert_eq!(topology.devices.len(), 2);
@@ -294,7 +294,7 @@ fn test_topology_with_external_gateway() {
         ],
     );
 
-    let topology = build_test_topology(vec![device1]);
+    let topology = build_test_topology(&[device1]);
 
     // Should create internet node and connection
     assert_eq!(topology.devices.len(), 2); // device1 + internet
@@ -338,7 +338,7 @@ fn test_topology_with_multiple_external_gateways() {
         ],
     );
 
-    let topology = build_test_topology(vec![device1, device2]);
+    let topology = build_test_topology(&[device1, device2]);
 
     // Should create one internet node with multiple connections
     assert_eq!(topology.devices.len(), 3); // device1 + device2 + internet
@@ -387,7 +387,7 @@ fn test_topology_mixed_internal_external_gateways() {
         None,
     ));
 
-    let topology = build_test_topology(vec![device1, device2]);
+    let topology = build_test_topology(&[device1, device2]);
 
     // Should create internet node + both devices
     assert_eq!(topology.devices.len(), 3); // device1 + device2 + internet
@@ -486,7 +486,7 @@ fn test_topology_with_cdp_peer_relationships() {
     let device1_id = device_state1.device.device_id;
     let device2_id = device_state2.device.device_id;
 
-    let topology = build_test_topology(vec![device_state1, device_state2]);
+    let topology = build_test_topology(&[device_state1, device_state2]);
 
     // Should create CDP connections between devices
     assert_eq!(topology.devices.len(), 2);
@@ -587,7 +587,7 @@ fn test_topology_with_vlan_cdp_relationships() {
         config_hash: 67890u64,
     };
 
-    let topology = build_test_topology(vec![device_state1, device_state2]);
+    let topology = build_test_topology(&[device_state1, device_state2]);
 
     // Should create VLAN-tagged CDP connections
     assert_eq!(topology.devices.len(), 2);

@@ -89,23 +89,23 @@ pub async fn find_path(
             path: Vec::new(),
             total_hops: 0,
             success: false,
-            error: Some(error),
+            error: Some(error.to_string()),
         }),
     }
 }
 async fn perform_pathfind(
     config: &AppConfig,
     request: PathFindRequest,
-) -> Result<Vec<PathHop>, String> {
+) -> Result<Vec<PathHop>, TrailFinderError> {
     use cidr::IpCidr;
     // Parse destination IP/network
     let dest_network: IpCidr = request
         .destination
         .ip
         .as_ref()
-        .ok_or("No destination IP specified")?
+        .ok_or(TrailFinderError::NoDestinationSpecified)?
         .parse()
-        .map_err(|e| format!("Invalid destination IP/network: {}", e))?;
+        .map_err(TrailFinderError::InvalidDestination)?;
     // Load all device states
     let mut device_states = Vec::new();
     for device_config in &config.devices {
@@ -114,7 +114,7 @@ async fn perform_pathfind(
         }
     }
     if device_states.is_empty() {
-        return Err("No device states available for pathfinding".to_string());
+        return Err(TrailFinderError::NoDevicesConfigured);
     }
     // Find and validate the source device
     let source_device = find_source_device(&device_states, &request.source)?;
@@ -129,7 +129,13 @@ async fn perform_pathfind(
     let mut path_hops = Vec::new();
 
     // Add source hop (hop 0)
-    let source_ip = request.source.ip.as_ref().ok_or("Source IP required")?;
+    let source_ip = request
+        .source
+        .ip
+        .as_ref()
+        .ok_or(TrailFinderError::BadRequest(
+            "Source IP required".to_string(),
+        ))?;
     path_hops.push(PathHop {
         device: format!("Source: {}", source_ip),
         incoming_interface: None,
@@ -148,18 +154,24 @@ async fn perform_pathfind(
     for _hop_count in 0..max_hops {
         // Check for routing loops
         if visited_devices.contains(&current_device.device.hostname) {
-            return Err("Routing loop detected".to_string());
+            return Err(TrailFinderError::RoutingLoop(
+                current_device.device.hostname.clone(),
+                path_hops.last().map(|hop| Box::new(hop.clone())),
+            ));
         }
         visited_devices.insert(current_device.device.hostname.clone());
         // Find the best matching route
         let matching_route = find_best_route(&current_device.device, &dest_network, &request)?;
-        if matching_route.is_none() {
-            return Err(format!(
-                "No route found to {} from device {}",
-                dest_network, current_device.device.hostname
-            ));
-        }
-        let route = matching_route.unwrap();
+
+        let route = match matching_route {
+            None => {
+                return Err(TrailFinderError::NoRouteFound(format!(
+                    "No route found to {} from device {}",
+                    dest_network, current_device.device.hostname
+                )));
+            }
+            Some(route) => route,
+        };
         let route_interface_id = route.interface_id();
         // Find the exit interface - try by ID first, then by gateway subnet matching
         let exit_interface = current_device
@@ -184,20 +196,36 @@ async fn perform_pathfind(
                 }
             })
             .ok_or_else(|| {
-                format!(
+                TrailFinderError::NotFound(format!(
                     "No suitable interface found for route to {} on device {} (interface ID: {})",
                     route.target, current_device.device.hostname, route_interface_id
-                )
+                ))
             })?;
         // Determine outgoing VLAN for this hop
-        let outgoing_vlan = determine_hop_vlan(&request, exit_interface, current_device)?;
+        let outgoing_vlan = match determine_hop_vlan(&request, exit_interface, current_device) {
+            Some(vlan) => Some(vlan),
+            None => {
+                return Err(TrailFinderError::NotFound(format!(
+                    "Cannot determine outgoing VLAN on interface '{}' of device '{}'. Please specify source VLAN or ensure the interface has a single VLAN configured.",
+                    exit_interface.name, current_device.device.hostname
+                )));
+            }
+        };
         // Find incoming interface and VLAN
         let (incoming_interface, incoming_vlan) = if path_hops.len() == 1 {
             // First device hop - find interface that can route the source IP
-            find_ingress_interface_for_source(&current_device.device, source_ip, &request)?
+            match find_ingress_interface_for_source(&current_device.device, source_ip, &request) {
+                Ok((iface, vlan)) => (iface, vlan),
+                Err(err) => {
+                    return Err(TrailFinderError::NotFound(format!(
+                        "Failed to find ingress interface for source IP {} on device {}: {}",
+                        source_ip, current_device.device.hostname, err
+                    )));
+                }
+            }
         } else if let Some(prev_gw) = previous_gateway {
             // Subsequent hops - find interface that can reach the previous gateway
-            find_ingress_interface_for_gateway(&current_device.device, &prev_gw)?
+            find_ingress_interface_for_gateway(&current_device.device, &prev_gw)
         } else {
             (None, None)
         };
@@ -233,7 +261,7 @@ async fn perform_pathfind(
         }
     }
     if path_hops.is_empty() {
-        Err("No path found".to_string())
+        Err(TrailFinderError::NoRouteFound("No path found".to_string()))
     } else {
         Ok(path_hops)
     }
@@ -241,23 +269,31 @@ async fn perform_pathfind(
 fn find_source_device<'a>(
     device_states: &'a [DeviceState],
     source: &PathEndpoint,
-) -> Result<&'a DeviceState, String> {
+) -> Result<&'a DeviceState, TrailFinderError> {
     if let Some(source_hostname) = &source.device {
         device_states
             .iter()
             .find(|ds| ds.device.hostname == *source_hostname)
-            .ok_or_else(|| format!("Source device '{}' not found", source_hostname))
+            .ok_or_else(|| {
+                TrailFinderError::NotFound(format!("Source device '{}' not found", source_hostname))
+            })
     } else if let Some(source_device_id) = &source.device_id {
-        let device_id = Uuid::parse_str(source_device_id)
-            .map_err(|e| format!("Invalid source device ID: {}", e))?;
+        let device_id = Uuid::parse_str(source_device_id).map_err(|e| {
+            TrailFinderError::BadRequest(format!("Invalid source device ID: {}", e))
+        })?;
         device_states
             .iter()
             .find(|ds| ds.device.device_id == device_id)
-            .ok_or_else(|| format!("Source device with ID '{}' not found", source_device_id))
+            .ok_or_else(|| {
+                TrailFinderError::NotFound(format!(
+                    "Source device with ID '{}' not found",
+                    source_device_id
+                ))
+            })
     } else if let Some(source_ip_str) = &source.ip {
         let source_ip: IpAddr = source_ip_str
             .parse()
-            .map_err(|e| format!("Invalid source IP: {}", e))?;
+            .map_err(|e| TrailFinderError::Parse(format!("Invalid source IP: {}", e)))?;
         // Find device with this IP on any interface
         device_states
             .iter()
@@ -269,66 +305,88 @@ fn find_source_device<'a>(
                         .any(|addr| addr.can_route(&source_ip).unwrap_or(false))
                 })
             })
-            .ok_or("No device found with the specified source IP".to_string())
+            .ok_or_else(|| {
+                TrailFinderError::NotFound(
+                    "No device found with the specified source IP".to_string(),
+                )
+            })
     } else {
-        Err("Must specify either source device, source device ID, or source IP".to_string())
+        Err(TrailFinderError::BadRequest(
+            "Must specify either source device, source device ID, or source IP".to_string(),
+        ))
     }
 }
 fn find_destination_device<'a>(
     device_states: &'a [DeviceState],
     destination: &PathEndpoint,
-) -> Result<&'a DeviceState, String> {
+) -> Result<&'a DeviceState, TrailFinderError> {
     if let Some(dest_hostname) = &destination.device {
-        device_states
+        match device_states
             .iter()
             .find(|ds| ds.device.hostname == *dest_hostname)
-            .ok_or_else(|| format!("Destination device '{}' not found", dest_hostname))
+        {
+            Some(ds) => Ok(ds),
+            None => Err(TrailFinderError::NotFound(format!(
+                "Destination device '{}' not found",
+                dest_hostname
+            ))),
+        }
     } else if let Some(dest_device_id) = &destination.device_id {
-        let device_id = Uuid::parse_str(dest_device_id)
-            .map_err(|e| format!("Invalid destination device ID: {}", e))?;
+        let device_id = Uuid::parse_str(dest_device_id).map_err(|e| {
+            TrailFinderError::BadRequest(format!("Invalid destination device ID: {}", e))
+        })?;
         device_states
             .iter()
             .find(|ds| ds.device.device_id == device_id)
-            .ok_or_else(|| format!("Destination device with ID '{}' not found", dest_device_id))
+            .ok_or_else(|| {
+                TrailFinderError::NotFound(format!(
+                    "Destination device with ID '{}' not found",
+                    dest_device_id
+                ))
+            })
     } else {
-        Err("Destination device or device ID must be specified for validation".to_string())
+        Err(TrailFinderError::BadRequest(
+            "Destination device or device ID must be specified for validation".to_string(),
+        ))
     }
 }
-fn validate_source_endpoint(device: &crate::Device, source: &PathEndpoint) -> Result<(), String> {
+fn validate_source_endpoint(
+    device: &crate::Device,
+    source: &PathEndpoint,
+) -> Result<(), TrailFinderError> {
     // If both interface and IP are specified, validate consistency
     if let (Some(source_interface_name), Some(source_ip_str)) = (&source.interface, &source.ip) {
         let source_ip: IpAddr = source_ip_str
             .parse()
-            .map_err(|e| format!("Invalid source IP: {}", e))?;
+            .map_err(|e| TrailFinderError::BadRequest(format!("Invalid source IP: {}", e)))?;
         // Find the specified interface
         let interface = device
             .interfaces
             .iter()
             .find(|iface| iface.name == *source_interface_name)
             .ok_or_else(|| {
-                format!(
+                TrailFinderError::NotFound(format!(
                     "Interface '{}' not found on device '{}'",
                     source_interface_name, device.hostname
-                )
+                ))
             })?;
         // Check if the source IP exists on this interface
-        if !interface
-            .can_route(&source_ip)
-            .map_err(|err| format!("Failed to parse network address: {:?}", err))?
-        {
-            return Err(format!(
+        if !interface.can_route(&source_ip).map_err(|err| {
+            TrailFinderError::Parse(format!("Failed to parse network address: {:?}", err))
+        })? {
+            return Err(TrailFinderError::NoRouteFound(format!(
                 "Source IP '{}' is not routable on interface '{}' of device '{}'",
                 source_ip, source_interface_name, device.hostname
-            ));
+            )));
         }
         // Validate VLAN if specified
         if let Some(source_vlan) = source.vlan
             && !interface.vlans.contains(&source_vlan)
         {
-            return Err(format!(
+            return Err(TrailFinderError::NotFound(format!(
                 "VLAN {} not configured on interface '{}' of device '{}'",
                 source_vlan, source_interface_name, device.hostname
-            ));
+            )));
         }
     }
     Ok(())
@@ -337,7 +395,7 @@ fn validate_destination_endpoint(
     device: &crate::Device,
     destination: &PathEndpoint,
     dest_network: &cidr::IpCidr,
-) -> Result<(), String> {
+) -> Result<(), TrailFinderError> {
     // If destination interface is specified, validate it exists
     if let Some(dest_interface_name) = &destination.interface {
         let interface = device
@@ -345,26 +403,29 @@ fn validate_destination_endpoint(
             .iter()
             .find(|iface| iface.name == *dest_interface_name)
             .ok_or_else(|| {
-                format!(
+                TrailFinderError::NotFound(format!(
                     "Destination interface '{}' not found on device '{}'",
                     dest_interface_name, device.hostname
-                )
+                ))
             })?;
         // Validate VLAN if specified
         if let Some(dest_vlan) = destination.vlan
             && !interface.vlans.contains(&dest_vlan)
         {
-            return Err(format!(
+            return Err(TrailFinderError::NotFound(format!(
                 "VLAN {} not configured on destination interface '{}' of device '{}'",
                 dest_vlan, dest_interface_name, device.hostname
-            ));
+            )));
         }
         // Check if destination network is reachable through this interface
         if let Some(ip_part) = dest_network.to_string().split('/').next()
             && let Ok(dest_ip) = ip_part.parse::<IpAddr>()
-            && !interface
-                .can_route(&dest_ip)
-                .map_err(|err| format!("Failed to parse network address: {:?}", err))?
+            && !interface.can_route(&dest_ip).map_err(|err| {
+                TrailFinderError::Parse(format!(
+                    "Failed to parse network address {dest_ip}: {:?}",
+                    err
+                ))
+            })?
         {
             warn!(
                 "Destination IP '{}' may not be directly reachable on interface '{}' of device '{}'",
@@ -378,7 +439,7 @@ fn find_best_route<'a>(
     device: &'a crate::Device,
     dest_network: &cidr::IpCidr,
     request: &PathFindRequest,
-) -> Result<Option<&'a crate::Route>, String> {
+) -> Result<Option<&'a crate::Route>, TrailFinderError> {
     let dest_str = dest_network.to_string();
     let is_ipv4_destination = if let Some(ip_part) = dest_str.split('/').next() {
         if let Ok(dest_ip) = ip_part.parse::<IpAddr>() {
@@ -456,20 +517,20 @@ fn determine_hop_vlan(
     request: &PathFindRequest,
     interface: &crate::Interface,
     _device: &DeviceState,
-) -> Result<Option<u16>, String> {
+) -> Option<u16> {
     // If source VLAN is specified and interface supports it, use that
     if let Some(source_vlan) = request.source.vlan
         && interface.vlans.contains(&source_vlan)
     {
-        return Ok(Some(source_vlan));
+        return Some(source_vlan);
     }
 
     // If interface has only one VLAN, use that
     if interface.vlans.len() == 1 {
-        return Ok(Some(interface.vlans[0]));
+        return Some(interface.vlans[0]);
     }
     // If interface has no VLANs or multiple VLANs, return None (untagged)
-    Ok(None)
+    None
 }
 fn find_ingress_interface_for_source(
     device: &crate::Device,
@@ -529,7 +590,7 @@ fn find_ingress_interface_for_source(
 fn find_ingress_interface_for_gateway(
     device: &crate::Device,
     gateway_ip: &IpAddr,
-) -> Result<(Option<String>, Option<u16>), String> {
+) -> (Option<String>, Option<u16>) {
     // Find interface that can reach the gateway (same subnet)
     let interface = device.interfaces.iter().find(|iface| {
         iface.addresses.iter().any(|addr| {
@@ -546,10 +607,10 @@ fn find_ingress_interface_for_gateway(
         } else {
             None
         };
-        Ok((Some(iface.name.clone()), vlan))
+        (Some(iface.name.clone()), vlan)
     } else {
         // Gateway not directly reachable, return None for unknown ingress
-        Ok((None, None))
+        (None, None)
     }
 }
 
@@ -732,6 +793,7 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .to_string()
                 .contains("Source device 'router2' not found")
         );
     }
@@ -762,10 +824,9 @@ mod tests {
         let result = find_source_device(&device_states, &source);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Must specify either source device")
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::BadRequest("Must specify either source device".to_string())
         );
     }
 
@@ -795,7 +856,10 @@ mod tests {
 
         let result = validate_source_endpoint(&device, &source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Interface 'eth0' not found"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::NotFound("Interface 'eth0' not found".to_string())
+        );
     }
 
     #[test]
@@ -811,7 +875,12 @@ mod tests {
 
         let result = validate_source_endpoint(&device, &source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("is not routable on interface"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::NoRouteFound(
+                "IP address '10.0.0.1' is not routable on interface 'eth0'".to_string()
+            )
+        );
     }
 
     #[test]
@@ -828,7 +897,10 @@ mod tests {
 
         let result = validate_source_endpoint(&device, &source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("VLAN 100 not configured"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::BadRequest("VLAN 100 not configured".to_string())
+        );
     }
 
     #[test]
@@ -884,8 +956,8 @@ mod tests {
         };
 
         let result = determine_hop_vlan(&request, &interface, &device_state);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Some(100));
+        assert!(result.is_some());
+        assert_eq!(result, Some(100));
     }
 
     #[test]
@@ -900,8 +972,7 @@ mod tests {
         };
 
         let result = determine_hop_vlan(&request, &interface, &device_state);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Some(100));
+        assert_eq!(result, Some(100));
     }
 
     #[test]
@@ -916,8 +987,7 @@ mod tests {
         };
 
         let result = determine_hop_vlan(&request, &interface, &device_state);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        assert!(result.is_none());
     }
 
     #[test]
@@ -951,8 +1021,7 @@ mod tests {
         let gateway_ip = "192.168.1.254".parse::<IpAddr>().unwrap();
         let result = find_ingress_interface_for_gateway(&device, &gateway_ip);
 
-        assert!(result.is_ok());
-        let (interface, vlan) = result.unwrap();
+        let (interface, vlan) = result;
         assert_eq!(interface, Some("eth0".to_string()));
         assert_eq!(vlan, Some(100));
     }
@@ -965,10 +1034,8 @@ mod tests {
             .push(create_test_interface("eth0", "192.168.1.1", vec![]));
 
         let gateway_ip = "10.0.0.1".parse::<IpAddr>().unwrap(); // Different subnet
-        let result = find_ingress_interface_for_gateway(&device, &gateway_ip);
+        let (interface, vlan) = find_ingress_interface_for_gateway(&device, &gateway_ip);
 
-        assert!(result.is_ok());
-        let (interface, vlan) = result.unwrap();
         assert!(interface.is_none());
         assert!(vlan.is_none());
     }
@@ -1339,10 +1406,9 @@ mod tests {
         let result = find_source_device(&empty_device_states, &source);
 
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Source device 'router1' not found")
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::NotFound("Source device 'router1' not found".to_string())
         );
     }
 
@@ -1353,8 +1419,10 @@ mod tests {
         let source = PathEndpoint::new().with_device_id("invalid-uuid".to_string());
         let result = find_source_device(&device_states, &source);
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid source device ID"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::BadRequest("Invalid source device ID".to_string())
+        );
     }
 
     #[test]
@@ -1496,8 +1564,12 @@ mod tests {
 
         let result = validate_source_endpoint(&device, &source);
         // Should fail because interface has no addresses to route through
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("is not routable on interface"));
+        assert_eq!(
+            result,
+            Err(TrailFinderError::NoRouteFound(
+                "is not routable on interface".to_string()
+            ))
+        );
     }
 
     #[test]
@@ -1552,7 +1624,10 @@ mod tests {
 
         let result = validate_source_endpoint(&device, &source);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid source IP"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::BadRequest("Invalid source IP".to_string())
+        );
     }
 
     #[test]
@@ -1595,7 +1670,10 @@ mod tests {
         let result = find_source_device(&device_states, &source);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Source device '' not found"));
+        assert_eq!(
+            result.unwrap_err(),
+            TrailFinderError::NotFound("Source device '' not found".to_string())
+        );
     }
 
     #[test]

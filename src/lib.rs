@@ -1,4 +1,20 @@
-use std::{collections::HashMap, fmt::Display, net::IpAddr};
+#![deny(warnings)]
+#![warn(unused_extern_crates)]
+#![deny(clippy::todo)]
+#![deny(clippy::unimplemented)]
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+#![deny(clippy::panic)]
+#![deny(clippy::unreachable)]
+#![deny(clippy::await_holding_lock)]
+#![deny(clippy::needless_pass_by_value)]
+#![deny(clippy::trivially_copy_pass_by_ref)]
+
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    net::{AddrParseError, IpAddr},
+};
 
 use cidr::errors::NetworkParseError;
 use mac_address::MacAddress;
@@ -42,9 +58,18 @@ pub enum Owner {
     Named(String),
 }
 
+impl std::fmt::Display for Owner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Owner::Unknown => write!(f, "Unknown"),
+            Owner::Named(name) => write!(f, "{}", name),
+        }
+    }
+}
+
 impl From<String> for Owner {
     fn from(name: String) -> Self {
-        if name.is_empty() {
+        if name == "Unknown" || name.is_empty() {
             Owner::Unknown
         } else {
             Owner::Named(name)
@@ -180,16 +205,35 @@ impl From<&str> for InterfaceType {
 
 #[derive(Debug)]
 pub enum TrailFinderError {
-    Ssh(SshError),
-    Generic(String),
+    BadRequest(String),
     Config(String),
+    Generic(String),
+    InvalidDestination(NetworkParseError),
+    InvalidLine(String),
+    Io(std::io::Error),
+    NoDestinationSpecified,
+    NoDevicesConfigured,
+    NoRouteFound(String),
     NotFound(String),
     Parse(String),
-    InvalidLine(String),
     Regex(regex::Error),
     Serde(String),
-    Io(std::io::Error),
+    Ssh(SshError),
     WebDriverError(thirtyfour::error::WebDriverError),
+    RoutingLoop(String, Option<Box<pathfind::PathHop>>),
+}
+
+impl PartialEq for TrailFinderError {
+    fn eq(&self, other: &Self) -> bool {
+        // TODO: that's a bit of a hack but it works
+        self.to_string() == other.to_string()
+    }
+}
+
+impl From<AddrParseError> for TrailFinderError {
+    fn from(err: AddrParseError) -> Self {
+        TrailFinderError::Parse(err.to_string())
+    }
 }
 
 impl From<thirtyfour::error::WebDriverError> for TrailFinderError {
@@ -231,16 +275,38 @@ impl From<NetworkParseError> for TrailFinderError {
 impl std::fmt::Display for TrailFinderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TrailFinderError::Parse(msg) => write!(f, "Parse error: {}", msg),
-            TrailFinderError::InvalidLine(msg) => write!(f, "Invalid line: {}", msg),
-            TrailFinderError::Regex(error) => write!(f, "Regex error: {}", error),
-            TrailFinderError::Serde(error) => write!(f, "Serde error: {}", error),
-            TrailFinderError::Io(error) => write!(f, "IO error: {}", error),
-            TrailFinderError::NotFound(error) => write!(f, "Not found error: {}", error),
-            TrailFinderError::Config(error) => write!(f, "Config error: {}", error),
-            TrailFinderError::Generic(error) => write!(f, "Generic error: {}", error),
-            TrailFinderError::Ssh(error) => write!(f, "SSH error: {}", error),
+            TrailFinderError::BadRequest(error) => write!(f, "Bad request: {error}"),
+            TrailFinderError::Parse(error) => write!(f, "Parse error: {error}"),
+            TrailFinderError::InvalidLine(error) => write!(f, "Invalid line: {error}"),
+            TrailFinderError::Regex(error) => write!(f, "Regex error: {error}"),
+            TrailFinderError::Serde(error) => write!(f, "Serde error: {error}"),
+            TrailFinderError::Io(error) => write!(f, "IO error: {error}"),
+            TrailFinderError::NotFound(error) => write!(f, "Not found error: {error}"),
+            TrailFinderError::Config(error) => write!(f, "Config error: {error}"),
+            TrailFinderError::Generic(error) => write!(f, "Generic error: {error}"),
+            TrailFinderError::Ssh(error) => write!(f, "SSH error: {error}",),
             TrailFinderError::WebDriverError(error) => write!(f, "WebDriver error: {error}"),
+            TrailFinderError::InvalidDestination(err) => {
+                write!(f, "Invalid destination address/network: {err}",)
+            }
+            TrailFinderError::NoRouteFound(err) => write!(f, "No route found: {err}"),
+            TrailFinderError::NoDestinationSpecified => {
+                write!(f, "No destination specified")
+            }
+            TrailFinderError::NoDevicesConfigured => {
+                write!(f, "No devices exist in configuration")
+            }
+            TrailFinderError::RoutingLoop(device, hop) => {
+                if let Some(hop) = hop {
+                    write!(
+                        f,
+                        "Routing loop detected at device '{}' (last hop: device '{}', outgoing interface '{:?}')",
+                        device, hop.device, hop.outgoing_interface
+                    )
+                } else {
+                    write!(f, "Routing loop detected at device '{}'", device)
+                }
+            }
         }
     }
 }
@@ -1010,7 +1076,10 @@ impl Device {
         }
     }
     pub fn with_ipsec_peers(self, ipsec_peers: Vec<IpsecPeer>) -> Self {
-        Self { ipsec_peers, ..self }
+        Self {
+            ipsec_peers,
+            ..self
+        }
     }
 }
 
@@ -1024,8 +1093,8 @@ pub(crate) fn setup_test_logging() {
             tracing_subscriber::fmt::layer()
                 .with_target(true)
                 .with_thread_ids(false)
-                .with_level(true)
-                .with_writer(std::io::stderr),
+                .with_test_writer()
+                .with_level(true),
         )
         .with(tracing_subscriber::EnvFilter::new("debug"))
         .try_init();
@@ -1585,8 +1654,9 @@ mod lib_tests {
         )
         .with_mac_address(MacAddress::new([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
 
-        let json = serde_json::to_string(&interface).unwrap();
-        let deserialized: Interface = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&interface).expect("Failed to serialize interface");
+        let deserialized: Interface =
+            serde_json::from_str(&json).expect("Failed to deserialize interface");
 
         assert_eq!(interface.name, deserialized.name);
         assert_eq!(interface.interface_type, deserialized.interface_type);
@@ -1598,13 +1668,15 @@ mod lib_tests {
     fn test_route_serialization() {
         let route = Route {
             route_type: RouteType::Default(uuid::Uuid::new_v4()),
-            target: cidr::IpCidr::V4(Ipv4Cidr::new(Ipv4Addr::new(0, 0, 0, 0), 0).unwrap()),
+            target: cidr::IpCidr::V4(
+                Ipv4Cidr::new(Ipv4Addr::new(0, 0, 0, 0), 0).expect("Valid CIDR"),
+            ),
             gateway: Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))),
             distance: Some(1),
         };
 
-        let json = serde_json::to_string(&route).unwrap();
-        let deserialized: Route = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&route).expect("Failed to serialize route");
+        let deserialized: Route = serde_json::from_str(&json).expect("Failed to deserialize route");
 
         assert_eq!(route.target, deserialized.target);
         assert_eq!(route.gateway, deserialized.gateway);

@@ -12,7 +12,6 @@
 
 ### Enhanced CLI Features
 
-- [ ] config-dump that shows the "running" appconfig after parsing
 - [ ] Add device discovery via network scanning
 
 ## Documentation
