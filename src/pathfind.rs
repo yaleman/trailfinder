@@ -214,15 +214,7 @@ async fn perform_pathfind(
         // Find incoming interface and VLAN
         let (incoming_interface, incoming_vlan) = if path_hops.len() == 1 {
             // First device hop - find interface that can route the source IP
-            match find_ingress_interface_for_source(&current_device.device, source_ip, &request) {
-                Ok((iface, vlan)) => (iface, vlan),
-                Err(err) => {
-                    return Err(TrailFinderError::NotFound(format!(
-                        "Failed to find ingress interface for source IP {} on device {}: {}",
-                        source_ip, current_device.device.hostname, err
-                    )));
-                }
-            }
+            find_ingress_interface_for_source(&current_device.device, source_ip, &request)?
         } else if let Some(prev_gw) = previous_gateway {
             // Subsequent hops - find interface that can reach the previous gateway
             find_ingress_interface_for_gateway(&current_device.device, &prev_gw)
@@ -532,14 +524,13 @@ fn determine_hop_vlan(
     // If interface has no VLANs or multiple VLANs, return None (untagged)
     None
 }
+
 fn find_ingress_interface_for_source(
     device: &crate::Device,
     source_ip: &str,
     request: &PathFindRequest,
-) -> Result<(Option<String>, Option<u16>), String> {
-    let source_addr: IpAddr = source_ip
-        .parse()
-        .map_err(|e| format!("Invalid source IP: {}", e))?;
+) -> Result<(Option<String>, Option<u16>), TrailFinderError> {
+    let source_addr: IpAddr = source_ip.parse()?;
     // If source interface is specified in request, use that
     if let Some(source_interface_name) = &request.source.interface {
         let interface = device
@@ -547,10 +538,10 @@ fn find_ingress_interface_for_source(
             .iter()
             .find(|iface| iface.name == *source_interface_name)
             .ok_or_else(|| {
-                format!(
+                TrailFinderError::NotFound(format!(
                     "Source interface '{}' not found on device '{}'",
                     source_interface_name, device.hostname
-                )
+                ))
             })?;
 
         let vlan = if let Some(source_vlan) = request.source.vlan {
@@ -569,10 +560,10 @@ fn find_ingress_interface_for_source(
         .iter()
         .find(|iface| iface.can_route(&source_addr).unwrap_or(false))
         .ok_or_else(|| {
-            format!(
+            TrailFinderError::NotFound(format!(
                 "No interface found that can route source IP {} on device {}",
                 source_ip, device.hostname
-            )
+            ))
         })?;
     let vlan = if let Some(source_vlan) = request.source.vlan {
         if interface.vlans.contains(&source_vlan) {
