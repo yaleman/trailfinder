@@ -52,6 +52,75 @@ impl From<String> for Owner {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum IpsecExchangeMode {
+    Ike,
+    Ike2,
+}
+
+impl std::fmt::Display for IpsecExchangeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IpsecExchangeMode::Ike => write!(f, "ike"),
+            IpsecExchangeMode::Ike2 => write!(f, "ike2"),
+        }
+    }
+}
+
+impl From<&str> for IpsecExchangeMode {
+    fn from(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "ike" => IpsecExchangeMode::Ike,
+            "ike2" => IpsecExchangeMode::Ike2,
+            _ => IpsecExchangeMode::Ike2, // Default to IKE2
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct IpsecPeer {
+    /// Name of the IPSec peer as configured
+    pub peer_name: String,
+    /// Remote address/hostname of the peer
+    #[schema(value_type = Option<String>, example = "192.168.1.1")]
+    pub remote_address: Option<IpAddr>,
+    /// Remote hostname if not an IP address
+    pub remote_hostname: Option<String>,
+    /// Local identity used in the tunnel
+    pub local_identity: Option<String>,
+    /// Remote identity expected from the peer
+    pub remote_identity: Option<String>,
+    /// Local networks accessible through this tunnel
+    #[schema(value_type = Vec<String>, example = json!(["10.0.0.0/16"]))]
+    pub local_networks: Vec<cidr::IpCidr>,
+    /// Remote networks accessible through this tunnel
+    #[schema(value_type = Vec<String>, example = json!(["10.1.0.0/16"]))]
+    pub remote_networks: Vec<cidr::IpCidr>,
+    /// Exchange mode (ike, ike2)
+    pub exchange_mode: Option<IpsecExchangeMode>,
+    /// Whether this peer acts as passive listener
+    pub passive: bool,
+    /// Comment/description for this peer
+    pub comment: Option<String>,
+}
+
+impl IpsecPeer {
+    pub fn new(peer_name: String) -> Self {
+        Self {
+            peer_name,
+            remote_address: None,
+            remote_hostname: None,
+            local_identity: None,
+            remote_identity: None,
+            local_networks: Vec::new(),
+            remote_networks: Vec::new(),
+            exchange_mode: None,
+            passive: false,
+            comment: None,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Device {
     pub device_id: uuid::Uuid,
@@ -64,6 +133,7 @@ pub struct Device {
     pub device_type: DeviceType,
     pub routes: Vec<Route>,
     pub interfaces: Vec<Interface>,
+    pub ipsec_peers: Vec<IpsecPeer>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -913,6 +983,7 @@ impl Device {
             device_type,
             routes: Vec::new(),
             interfaces: Vec::new(),
+            ipsec_peers: Vec::new(),
         }
     }
 
@@ -937,6 +1008,9 @@ impl Device {
             system_identity,
             ..self
         }
+    }
+    pub fn with_ipsec_peers(self, ipsec_peers: Vec<IpsecPeer>) -> Self {
+        Self { ipsec_peers, ..self }
     }
 }
 

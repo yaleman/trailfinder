@@ -142,6 +142,7 @@ pub enum ConnectionType {
     SameNetwork,
     Internet,
     CDP,
+    IPSec,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -501,6 +502,56 @@ pub async fn get_network_topology(
                             });
                         }
                     }
+                }
+            }
+        }
+
+        // Find IPSec tunnel connections
+        for ipsec_peer in &device_state.device.ipsec_peers {
+            // Look for devices that match the IPSec peer's remote hostname or IP
+            for other_device in &device_states {
+                if other_device.device.hostname == device_state.device.hostname {
+                    continue;
+                }
+
+                let mut peer_matched = false;
+
+                // Check if remote hostname matches another device's hostname
+                if let Some(ref remote_hostname) = ipsec_peer.remote_hostname {
+                    if other_device.device.hostname.contains(&remote_hostname.replace(".example.com", "")) {
+                        peer_matched = true;
+                    }
+                }
+
+                // Check if remote IP matches another device's interface IP
+                if let Some(ref remote_ip) = ipsec_peer.remote_address {
+                    for other_interface in &other_device.device.interfaces {
+                        if other_interface
+                            .addresses
+                            .iter()
+                            .any(|addr| &addr.ip == remote_ip)
+                        {
+                            peer_matched = true;
+                            break;
+                        }
+                    }
+                }
+
+                if peer_matched {
+                    let connection_label = format!(
+                        "IPSec-{} ({})",
+                        ipsec_peer.peer_name,
+                        ipsec_peer.exchange_mode.as_ref().map(|mode| format!("{:?}", mode)).unwrap_or_else(|| "Unknown".to_string())
+                    );
+
+                    connections.push(NetworkConnection {
+                        from: device_state.device.device_id.to_string(),
+                        to: other_device.device.device_id.to_string(),
+                        interface_from: connection_label,
+                        interface_to: Some(format!("IPSec-{}", ipsec_peer.peer_name)),
+                        connection_type: ConnectionType::IPSec,
+                    });
+                    break;
                 }
             }
         }

@@ -6,7 +6,7 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use super::prelude::*;
-use crate::InterfaceAddress;
+use crate::{InterfaceAddress, IpsecPeer};
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
 
@@ -18,6 +18,7 @@ pub struct Cisco {
     routes: Vec<Route>,
     interfaces: Vec<Interface>,
     system_identity: Option<String>,
+    ipsec_peers: Vec<IpsecPeer>,
 }
 
 impl Cisco {
@@ -31,6 +32,7 @@ impl Cisco {
             routes: Vec::new(),
             interfaces: Vec::new(),
             system_identity: None,
+            ipsec_peers: Vec::new(),
         }
     }
 }
@@ -38,6 +40,7 @@ impl Cisco {
 impl DeviceHandler for Cisco {
     const GET_IP_COMMAND: &'static str = "show ip interface  | i (is up|Internet address)";
     const GET_IDENTITY_COMMAND: &'static str = "show running-config | include hostname";
+    const GET_IPSEC_COMMAND: &'static str = "";
 
     fn new(hostname: String, name: Option<String>, owner: Owner, device_type: DeviceType) -> Self {
         Self {
@@ -48,6 +51,7 @@ impl DeviceHandler for Cisco {
             routes: Vec::new(),
             interfaces: Vec::new(),
             system_identity: None,
+            ipsec_peers: Vec::new(),
         }
     }
 
@@ -404,6 +408,7 @@ impl DeviceHandler for Cisco {
             .with_routes(self.routes)
             .with_interfaces(self.interfaces)
             .with_system_identity(self.system_identity)
+            .with_ipsec_peers(self.ipsec_peers)
     }
 
     fn parse_identity(&mut self, input_data: &str) -> Result<(), TrailFinderError> {
@@ -423,6 +428,12 @@ impl DeviceHandler for Cisco {
                 );
             }
         }
+        Ok(())
+    }
+
+    fn parse_ipsec(&mut self, _input_data: &str) -> Result<(), TrailFinderError> {
+        // IPSec parsing not implemented for Cisco devices yet
+        // This is a pass-through implementation
         Ok(())
     }
 
@@ -482,13 +493,21 @@ impl DeviceHandler for Cisco {
             parser.parse_identity(&hostname_output)?;
             parser.parse_ip_addresses(&ssh_client.execute_command(Self::GET_IP_COMMAND).await?)?;
 
+            // Get IPSec configuration (pass-through for Cisco)
+            let ipsec_output = ssh_client
+                .execute_command(Self::GET_IPSEC_COMMAND)
+                .await
+                .unwrap_or_default();
+            parser.parse_ipsec(&ipsec_output)?;
+
             let device = parser.build();
 
-            // Combine both outputs for config hash
+            // Combine all outputs for config hash
             let combined_config = format!(
                 "{}
+{}
 {}",
-                interfaces_output, routes_output
+                interfaces_output, routes_output, ipsec_output
             );
             Ok(DeviceState::new(device, &combined_config))
         }
