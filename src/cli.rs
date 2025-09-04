@@ -2,6 +2,7 @@
 
 use std::{
     net::{IpAddr, SocketAddr},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -37,7 +38,7 @@ struct Cli {
         default_value = "devices.json",
         global = true
     )]
-    config_path: String,
+    config_path: PathBuf,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -126,15 +127,16 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     // Load config file, only create if it doesn't exist
     let mut app_config = match AppConfig::load_from_file(config_path) {
         Ok(config) => {
-            info!("Loaded configuration from {}", config_path);
+            info!("Loaded configuration from {}", config_path.display());
             config
         }
         Err(e) => {
             // Check if file exists but has errors vs doesn't exist
-            if std::path::Path::new(config_path).exists() {
+            if config_path.exists() {
                 error!(
                     "Error loading existing config file '{}': {}",
-                    config_path, e
+                    config_path.display(),
+                    e
                 );
                 error!("💡 Please check the file for JSON syntax errors or permission issues.");
                 error!("📄 You can validate JSON at: https://jsonlint.com/");
@@ -142,13 +144,13 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 info!(
                     "Config file '{}' not found, creating default configuration",
-                    config_path
+                    config_path.display()
                 );
                 let config = AppConfig::default();
                 config.save_to_file(config_path)?;
                 info!(
                     "✅ Created default config at '{}' - please edit it to add your devices",
-                    config_path
+                    config_path.display()
                 );
                 config
             }
@@ -234,7 +236,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn identify_command(
     app_config: &mut AppConfig,
-    config_path: &str,
+    config_path: &PathBuf,
     target_hostname: Option<String>,
     username: Option<String>,
     keyfile: Option<String>,
@@ -381,14 +383,14 @@ async fn identify_command(
 
     // Save updated configuration
     app_config.save_to_file(config_path)?;
-    info!("Updated configuration saved to {}", config_path);
+    info!("Updated configuration saved to {}", config_path.display());
 
     Ok(())
 }
 
 async fn update_command(
     app_config: &mut AppConfig,
-    config_path: &str,
+    config_path: &PathBuf,
     specific_devices: Vec<String>,
 ) -> Result<(), TrailFinderError> {
     // Determine which devices to update
@@ -512,7 +514,7 @@ async fn update_command(
 
     // Save updated configuration
     app_config.save_to_file(config_path)?;
-    info!("Updated configuration saved to {}", config_path);
+    info!("Updated configuration saved to {}", config_path.display());
 
     Ok(())
 }
@@ -750,7 +752,7 @@ fn print_path_result(result: &crate::pathfind::PathFindResult) {
 mod tests {
     use super::*;
     use clap::Parser;
-    use std::io::Write;
+    use std::{io::Write, str::FromStr};
     use tempfile::NamedTempFile;
 
     // Helper function to create a temporary config file
@@ -915,7 +917,10 @@ mod tests {
 
         let cli = cli.unwrap();
         assert!(cli.debug);
-        assert_eq!(cli.config_path, "custom.json");
+        assert_eq!(
+            cli.config_path,
+            PathBuf::from_str("custom.json").expect("Failed to parse")
+        );
     }
 
     #[test]

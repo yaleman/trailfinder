@@ -401,3 +401,14 @@ ul.device-stats  {
         margin: 2% auto;
     }
 }
+
+div.topology_tooltip {
+    position:absolute;
+    background: rgba(0,0,0,0.8);
+    color: white;
+    padding: 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 9999;
+    font-size: 12px;
+}

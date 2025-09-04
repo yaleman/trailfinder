@@ -1,20 +1,22 @@
 # Trailfinder
 
-A Rust application for network device discovery and configuration parsing. Trailfinder can SSH into network devices, automatically identify their brand and type, parse their configurations, and maintain a JSON-based inventory.
+A Rust application for network device discovery and configuration parsing. Trailfinder can SSH into network devices, automatically identify their brand and type, parse their configurations, maintain a JSON-based inventory, and provide web-based topology visualization.
 
 ## Features
 
 - **Automatic Device Discovery** - SSH into devices and identify brand/type automatically
-- **Configuration Parsing** - Parse network device configurations (currently supports MikroTik)
+- **Configuration Parsing** - Parse network device configurations (supports MikroTik and Cisco)
+- **Web-based Topology Visualization** - Interactive network topology maps with D3.js
 - **SSH Config Integration** - Uses your existing `~/.ssh/config` for authentication
 - **Multiple Auth Methods** - Supports ssh-agent, key files, and password authentication
 - **JSON Inventory** - Maintains device inventory with caching to avoid unnecessary connections
 - **Extensible Architecture** - Plugin-based parser system for adding new device brands
+- **Comprehensive Testing** - 173+ tests with robust coverage of all major components
 
 ## Supported Devices
 
-- **MikroTik** - RouterOS devices (routers, switches, access points)
-- **Cisco** - Basic identification support
+- **MikroTik** - Full configuration parsing for RouterOS devices (routers, switches, access points)
+- **Cisco** - Full configuration parsing for IOS devices
 - **Ubiquiti** - Basic identification support
 
 ## Installation
@@ -30,6 +32,24 @@ A Rust application for network device discovery and configuration parsing. Trail
 git clone <repository-url>
 cd trailfinder
 cargo build --release
+```
+
+### Using Just
+
+The project includes a `justfile` for common development tasks:
+
+```bash
+# Install just if you haven't already
+cargo install just
+
+# Check code (build + clippy + tests)
+just check
+
+# Run clippy linting
+just clippy
+
+# Run tests
+just test
 ```
 
 ## Usage
@@ -61,21 +81,36 @@ Create a `devices.json` file with your network devices:
 ### 2. Run Discovery
 
 ```bash
-# Uses SSH config and ssh-agent by default
+# Discovery mode - uses SSH config and ssh-agent by default
 cargo run
+
+# With debug logging
+cargo run -- --debug
 
 # Or use password authentication
 SSH_PASSWORD=mypassword cargo run
 ```
 
-### 3. View Results
+### 3. Web Interface
 
-The application will:
+```bash
+# Start the web server for topology visualization
+cargo run web
+
+# Access at http://localhost:8080
+```
+
+### 4. View Results
+
+The discovery process will:
 
 - Connect to each device via SSH
 - Identify the device brand and type
+- Parse device configurations (interfaces, routes, neighbors)
 - Update the `devices.json` file with discovered information
 - Cache results to avoid re-identification for 24 hours (configurable)
+
+Use the web interface to visualize network topology and explore device relationships interactively.
 
 ## SSH Authentication
 
@@ -166,23 +201,40 @@ impl ConfParser for CiscoParser {
 
 ## Development
 
-### Running Tests
+### Development Commands
 
 ```bash
-cargo test
-```
+# Run all tests (173+ tests)
+cargo test --quiet
 
-### Code Formatting
+# Run specific test suites
+cargo test --quiet mikrotik    # MikroTik parser tests
+cargo test --quiet cisco       # Cisco parser tests
+cargo test --quiet ssh_tests   # SSH client tests
+cargo test --quiet lib_tests   # Core library tests
 
-```bash
+# Fast compilation check
+cargo check --quiet
+
+# Code formatting
 cargo fmt
+
+# Linting
+cargo clippy --all-targets --quiet
+
+# Complete development check (recommended)
+just check
 ```
 
-### Linting
+### Test Coverage
 
-```bash
-cargo clippy
-```
+The project maintains comprehensive test coverage:
+
+- **CLI Integration Tests** - 25+ tests covering command parsing and config validation
+- **SSH Client Tests** - 20+ tests covering connection management and authentication
+- **Core Library Tests** - 32+ tests covering data models and serialization
+- **Brand Parser Tests** - 43+ tests covering MikroTik (23) and Cisco (20) configuration parsing
+- **Total: 173+ tests** providing robust validation of all functionality
 
 ## Security Considerations
 
