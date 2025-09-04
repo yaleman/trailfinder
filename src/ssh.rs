@@ -269,9 +269,8 @@ impl SshClient {
             .await
             .map_err(|e| {
                 SshError::Connection(format!(
-                    "address={} error={}",
-                    &self.connection_info.address,
-                    e.to_string()
+                    "address={} error={e}",
+                    &self.connection_info.address
                 ))
             })?;
 
