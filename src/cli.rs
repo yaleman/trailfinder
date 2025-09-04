@@ -467,10 +467,12 @@ async fn update_command(
                     Err(e) => warn!("Failed to save updated device state for {hostname}: {e}"),
                 }
             }
+            Ok(Err(e)) => {
+                error!("Error during device update: {}", e);
+            }
             Err(e) => {
                 error!("Failed to update {}", e);
             }
-            Ok(Err(e)) => return Err(e),
         }
     }
 

@@ -3,9 +3,9 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
 
-// Remove the old ssh_config crate import
 use tracing::{debug, error, trace, warn};
 
+use crate::config::ssh::SshConfig;
 use crate::{DeviceType, config::DeviceBrand};
 
 #[derive(Debug, Clone)]
@@ -195,8 +195,6 @@ impl SshClient {
     }
 
     fn load_ssh_config() -> Result<crate::config::ssh::SshConfig, SshError> {
-        use crate::config::ssh::SshConfig;
-
         let ssh_config_path = if let Some(home_dir) = dirs::home_dir() {
             home_dir.join(".ssh").join("config")
         } else {
@@ -269,7 +267,13 @@ impl SshClient {
 
         let session = client::connect(Arc::new(config), &self.connection_info.address, handler)
             .await
-            .map_err(|e| SshError::Connection(e.to_string()))?;
+            .map_err(|e| {
+                SshError::Connection(format!(
+                    "address={} error={}",
+                    &self.connection_info.address,
+                    e.to_string()
+                ))
+            })?;
 
         Ok(session)
     }
