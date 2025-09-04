@@ -145,6 +145,7 @@ impl DeviceState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Application configuration, loaded from [super::cli::DEFAULT_CONFIG_FILE] by default.
 pub struct AppConfig {
     pub devices: Vec<DeviceConfig>,
     pub ssh_timeout_seconds: u64,

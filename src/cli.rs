@@ -21,6 +21,8 @@ use crate::{
 };
 use uuid::Uuid;
 
+pub const DEFAULT_CONFIG_FILE: &str = "devices.json";
+
 /// Trailfinder - Network device discovery and configuration parsing tool
 #[derive(Parser)]
 #[command(name = "trailfinder")]
@@ -35,7 +37,7 @@ struct Cli {
     #[arg(
         short = 'c',
         long = "config",
-        default_value = "devices.json",
+        default_value = DEFAULT_CONFIG_FILE,
         global = true
     )]
     config_path: PathBuf,
