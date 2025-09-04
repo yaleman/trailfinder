@@ -617,25 +617,22 @@ impl DeviceHandler for Mikrotik {
                         if let Ok(cidr) = IpCidr::from_str(value) {
                             src_network = Some(cidr);
                         }
-                    } else if let Some(value) = part.strip_prefix("dst-address=") {
-                        if let Ok(cidr) = IpCidr::from_str(value) {
+                    } else if let Some(value) = part.strip_prefix("dst-address=")
+                        && let Ok(cidr) = IpCidr::from_str(value) {
                             dst_network = Some(cidr);
                         }
-                    }
                 }
                 
                 // Find existing peer and add networks
                 if let Some(peer) = self.ipsec_peers.iter_mut().find(|p| p.peer_name == peer_ref) {
-                    if let Some(src) = src_network {
-                        if !peer.local_networks.contains(&src) {
+                    if let Some(src) = src_network
+                        && !peer.local_networks.contains(&src) {
                             peer.local_networks.push(src);
                         }
-                    }
-                    if let Some(dst) = dst_network {
-                        if !peer.remote_networks.contains(&dst) {
+                    if let Some(dst) = dst_network
+                        && !peer.remote_networks.contains(&dst) {
                             peer.remote_networks.push(dst);
                         }
-                    }
                 }
             }
         }

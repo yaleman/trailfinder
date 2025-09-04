@@ -517,11 +517,10 @@ pub async fn get_network_topology(
                 let mut peer_matched = false;
 
                 // Check if remote hostname matches another device's hostname
-                if let Some(ref remote_hostname) = ipsec_peer.remote_hostname {
-                    if other_device.device.hostname.contains(&remote_hostname.replace(".example.com", "")) {
+                if let Some(ref remote_hostname) = ipsec_peer.remote_hostname
+                    && other_device.device.hostname.contains(&remote_hostname.replace(".example.com", "")) {
                         peer_matched = true;
                     }
-                }
 
                 // Check if remote IP matches another device's interface IP
                 if let Some(ref remote_ip) = ipsec_peer.remote_address {
