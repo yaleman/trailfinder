@@ -1045,7 +1045,7 @@ mod tests {
     fn test_calculate_column_widths() {
         use trailfinder::pathfind::PathHop;
 
-        let hops = vec![PathHop {
+        let hops = [PathHop {
             device: "Very Long Device Name That Should Affect Width".to_string(),
             incoming_interface: Some("GigabitEthernet0/0/1".to_string()),
             incoming_vlan: Some(1234),
@@ -1161,8 +1161,10 @@ mod tests {
 
     #[test]
     fn test_device_config_defaults() {
-        let mut device_config = DeviceConfig::default();
-        device_config.hostname = "test-device".to_string();
+        let device_config = DeviceConfig {
+            hostname: "test-device".to_string(),
+            ..DeviceConfig::default()
+        };
 
         assert_eq!(device_config.hostname, "test-device");
         assert!(device_config.ip_address.is_none());

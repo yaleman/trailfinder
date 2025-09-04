@@ -1060,9 +1060,7 @@ Interface: GigabitEthernet0/2,  Port ID (outgoing port): GigabitEthernet0/1"#;
 
         // Note: store_raw_cdp_data may return 0 if no valid CDP entries are found
         // This is acceptable behavior for malformed data
-        let count = result.unwrap();
-        // Just verify it doesn't crash and returns a valid count
-        assert!(count == 0 || count > 0, "Should return valid count");
+        result.expect("Failed to store CDP data");
     }
 
     #[test]
