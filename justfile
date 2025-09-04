@@ -48,3 +48,8 @@ docker_run: docker_build
         --mount type=bind,src=$(pwd)/devices.json,target=/devices.json \
         --mount type=bind,src=$(pwd)/states,target=/states \
         ghcr.io/yaleman/trailfinder:latest
+
+coverage:
+    cargo tarpaulin --out Html
+    pause
+    open tarpaulin-report.html
