@@ -12,7 +12,7 @@ use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    DeviceType, TrailFinderError,
+    DeviceType, Owner, TrailFinderError,
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
     network_discovery::{self, ScanConfig},
@@ -49,6 +49,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Add a device to the configuration
+    Add {
+        /// Hostname of the device to add
+        hostname: String,
+        /// IP address to use for connection
+        #[arg(short, long)]
+        ip_address: Option<String>,
+        /// SSH username to use for connection
+        #[arg(short, long)]
+        username: Option<String>,
+        /// SSH key file path to use for authentication
+        #[arg(short, long)]
+        keyfile: Option<String>,
+        /// SSH port to use for connection
+        #[arg(short, long, default_value = "22")]
+        port: u16,
+        /// Device owner name
+        #[arg(short, long)]
+        owner: Option<String>,
+        /// Optional notes about the device
+        #[arg(short, long)]
+        notes: Option<String>,
+    },
     /// Start web server for network topology visualization
     Web {
         /// Port to bind the web server to
@@ -207,6 +230,26 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         keyfile: None,
         ip_address: None,
     }) {
+        Commands::Add {
+            hostname,
+            ip_address,
+            username,
+            keyfile,
+            port,
+            owner,
+            notes,
+        } => {
+            let params = AddDeviceParams {
+                hostname: &hostname,
+                ip_address: &ip_address,
+                username: &username,
+                keyfile: &keyfile,
+                port,
+                owner: &owner,
+                notes: &notes,
+            };
+            add_command(&mut app_config, config_path, &params)?;
+        }
         Commands::Web { port, address } => {
             tokio::select! {
                 Ok(()) = tokio::signal::ctrl_c() => {
@@ -594,6 +637,100 @@ async fn update_command(
     // Save updated configuration
     app_config.save_to_file(config_path)?;
     info!("Updated configuration saved to {}", config_path.display());
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct AddDeviceParams<'a> {
+    hostname: &'a str,
+    ip_address: &'a Option<String>,
+    username: &'a Option<String>,
+    keyfile: &'a Option<String>,
+    port: u16,
+    owner: &'a Option<String>,
+    notes: &'a Option<String>,
+}
+
+fn add_command(
+    app_config: &mut AppConfig,
+    config_path: &PathBuf,
+    params: &AddDeviceParams,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Check if device already exists
+    if app_config.get_device(params.hostname).is_some() {
+        return Err(format!("Device '{}' already exists in configuration", params.hostname).into());
+    }
+
+    // Parse IP address if provided
+    let parsed_ip = if let Some(ip_str) = params.ip_address {
+        Some(ip_str.parse::<IpAddr>().map_err(|e| {
+            format!("Invalid IP address '{}': {}", ip_str, e)
+        })?)
+    } else {
+        None
+    };
+
+    // Parse SSH port
+    let ssh_port = std::num::NonZeroU16::new(params.port).ok_or_else(|| {
+        format!("Invalid SSH port '{}': port must be non-zero", params.port)
+    })?;
+
+    // Parse owner
+    let device_owner = match params.owner.as_deref() {
+        Some(owner_str) => Owner::Named(owner_str.to_string()),
+        None => Owner::Unknown,
+    };
+
+    // Create device configuration
+    let device_config = DeviceConfig {
+        device_id: Uuid::new_v4(),
+        hostname: params.hostname.to_string(),
+        ip_address: parsed_ip,
+        brand: None, // Will be set during identification
+        device_type: None, // Will be set during identification
+        owner: device_owner,
+        ssh_username: params.username.clone(),
+        ssh_port,
+        ssh_identity_files: if let Some(keyfile_path) = params.keyfile {
+            vec![PathBuf::from(keyfile_path)]
+        } else {
+            Vec::new()
+        },
+        ssh_key_passphrase: None,
+        last_interrogated: None,
+        notes: params.notes.clone(),
+        all_ssh_identity_files: Vec::new(),
+        ssh_config: None,
+    };
+
+    info!("Adding device '{}' to configuration", params.hostname);
+
+    // Add device to configuration
+    app_config.add_device(device_config);
+
+    // Re-process SSH configurations to include the new device
+    app_config.process_device_ssh_configs()?;
+
+    // Save updated configuration
+    app_config.save_to_file(config_path)?;
+
+    info!("✅ Device '{}' added successfully to configuration", params.hostname);
+    if let Some(ip_addr) = params.ip_address {
+        info!("   IP address: {}", ip_addr);
+    }
+    if let Some(user) = params.username {
+        info!("   SSH username: {}", user);
+    }
+    info!("   SSH port: {}", params.port);
+    if let Some(owner_name) = params.owner {
+        info!("   Owner: {}", owner_name);
+    }
+    if let Some(device_notes) = params.notes {
+        info!("   Notes: {}", device_notes);
+    }
+    
+    info!("💡 Use 'identify {}' to automatically detect device type and brand", params.hostname);
 
     Ok(())
 }
@@ -1448,6 +1585,23 @@ mod tests {
     #[test]
     fn test_commands_enum_variants() {
         // Test that all command variants can be constructed
+        let add_cmd = Commands::Add {
+            hostname: "test-device.example.com".to_string(),
+            ip_address: Some("192.168.1.1".to_string()),
+            username: Some("admin".to_string()),
+            keyfile: Some("/path/to/key".to_string()),
+            port: 2222,
+            owner: Some("Lab Network".to_string()),
+            notes: Some("Test device".to_string()),
+        };
+        match add_cmd {
+            Commands::Add { hostname, port, .. } => {
+                assert_eq!(hostname, "test-device.example.com");
+                assert_eq!(port, 2222);
+            }
+            _ => panic!("Unexpected command variant"),
+        }
+
         let web_cmd = Commands::Web {
             port: 8000,
             address: "127.0.0.1".to_string(),
@@ -1553,6 +1707,79 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parsing_add_command() {
+        // Test basic add command
+        let args = vec!["trailfinder", "add", "test-device.example.com"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Add {
+                hostname,
+                ip_address,
+                username,
+                keyfile,
+                port,
+                owner,
+                notes,
+            } => {
+                assert_eq!(hostname, "test-device.example.com");
+                assert_eq!(ip_address, None);
+                assert_eq!(username, None);
+                assert_eq!(keyfile, None);
+                assert_eq!(port, 22); // Default
+                assert_eq!(owner, None);
+                assert_eq!(notes, None);
+            }
+            _ => panic!("Expected Add command"),
+        }
+
+        // Test add command with all options
+        let args = vec![
+            "trailfinder",
+            "add",
+            "router1.example.com",
+            "--ip-address",
+            "192.168.1.1",
+            "--username",
+            "admin",
+            "--keyfile",
+            "/path/to/key",
+            "--port",
+            "2222",
+            "--owner",
+            "Lab Network",
+            "--notes",
+            "Primary router",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Add {
+                hostname,
+                ip_address,
+                username,
+                keyfile,
+                port,
+                owner,
+                notes,
+            } => {
+                assert_eq!(hostname, "router1.example.com");
+                assert_eq!(ip_address, Some("192.168.1.1".to_string()));
+                assert_eq!(username, Some("admin".to_string()));
+                assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(port, 2222);
+                assert_eq!(owner, Some("Lab Network".to_string()));
+                assert_eq!(notes, Some("Primary router".to_string()));
+            }
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
     fn test_cli_parsing_scan_command() {
         // Test basic scan command
         let args = vec!["trailfinder", "scan", "192.168.1.1", "10.0.0.0/24"];
@@ -1613,6 +1840,125 @@ mod tests {
             }
             _ => panic!("Expected Scan command"),
         }
+    }
+
+    #[test]
+    fn test_add_command_functionality() {
+        use crate::config::AppConfig;
+        use tempfile::NamedTempFile;
+
+        // Create a temporary config file
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let config_path = temp_file.path().to_path_buf();
+
+        // Create empty config
+        let mut app_config = AppConfig::default();
+
+        // Test adding a device with minimal options
+        let params = AddDeviceParams {
+            hostname: "test-device.example.com",
+            ip_address: &None,
+            username: &None,
+            keyfile: &None,
+            port: 22,
+            owner: &None,
+            notes: &None,
+        };
+        let result = add_command(&mut app_config, &config_path, &params);
+        assert!(result.is_ok());
+        assert_eq!(app_config.devices.len(), 1);
+        assert_eq!(app_config.devices[0].hostname, "test-device.example.com");
+        assert_eq!(app_config.devices[0].ssh_port.get(), 22);
+        assert!(app_config.devices[0].ip_address.is_none());
+
+        // Test adding a device with all options
+        let ip = Some("192.168.1.1".to_string());
+        let user = Some("admin".to_string());
+        let key = Some("/path/to/key".to_string());
+        let owner_val = Some("Lab Network".to_string());
+        let notes_val = Some("Primary router".to_string());
+        let params = AddDeviceParams {
+            hostname: "router1.example.com",
+            ip_address: &ip,
+            username: &user,
+            keyfile: &key,
+            port: 2222,
+            owner: &owner_val,
+            notes: &notes_val,
+        };
+        let result = add_command(&mut app_config, &config_path, &params);
+        assert!(result.is_ok());
+        assert_eq!(app_config.devices.len(), 2);
+        
+        let new_device = &app_config.devices[1];
+        assert_eq!(new_device.hostname, "router1.example.com");
+        assert_eq!(new_device.ip_address, Some("192.168.1.1".parse().unwrap()));
+        assert_eq!(new_device.ssh_username, Some("admin".to_string()));
+        assert_eq!(new_device.ssh_port.get(), 2222);
+        assert_eq!(new_device.notes, Some("Primary router".to_string()));
+
+        // Test adding duplicate device (should fail)
+        let params = AddDeviceParams {
+            hostname: "test-device.example.com",
+            ip_address: &None,
+            username: &None,
+            keyfile: &None,
+            port: 22,
+            owner: &None,
+            notes: &None,
+        };
+        let result = add_command(&mut app_config, &config_path, &params);
+        assert!(result.is_err());
+        assert_eq!(app_config.devices.len(), 2); // No change
+    }
+
+    #[test]
+    fn test_add_command_invalid_ip() {
+        use crate::config::AppConfig;
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let config_path = temp_file.path().to_path_buf();
+        let mut app_config = AppConfig::default();
+
+        // Test with invalid IP address
+        let invalid_ip = Some("invalid.ip.address".to_string());
+        let params = AddDeviceParams {
+            hostname: "test-device.example.com",
+            ip_address: &invalid_ip,
+            username: &None,
+            keyfile: &None,
+            port: 22,
+            owner: &None,
+            notes: &None,
+        };
+        let result = add_command(&mut app_config, &config_path, &params);
+        assert!(result.is_err());
+        assert_eq!(app_config.devices.len(), 0); // No device added
+    }
+
+    #[test]
+    fn test_add_command_invalid_port() {
+        use crate::config::AppConfig;
+        use tempfile::NamedTempFile;
+
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let config_path = temp_file.path().to_path_buf();
+        let mut app_config = AppConfig::default();
+
+        // Test with port 0 (invalid)
+        let params = AddDeviceParams {
+            hostname: "test-device.example.com",
+            ip_address: &None,
+            username: &None,
+            keyfile: &None,
+            port: 0,
+            owner: &None,
+            notes: &None,
+        };
+        let result = add_command(&mut app_config, &config_path, &params);
+        assert!(result.is_err());
+        assert_eq!(app_config.devices.len(), 0); // No device added
     }
 
     #[test]

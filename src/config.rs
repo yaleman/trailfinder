@@ -390,7 +390,7 @@ impl AppConfig {
 
     /// Process SSH configurations for all devices during config loading
     /// This resolves paths and deduplicates SSH keys, and loads SSH config
-    fn process_device_ssh_configs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn process_device_ssh_configs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Load SSH config once
         let ssh_config = Self::load_ssh_config()?;
 
