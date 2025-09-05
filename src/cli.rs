@@ -123,10 +123,10 @@ enum Commands {
         /// SSH port to test (default: 22)
         #[arg(short, long, default_value = "22")]
         port: u16,
-        /// SSH username for identification attempts
+        /// SSH username for identification attempts (defaults to ~/.ssh/config or $USER)
         #[arg(short, long)]
         username: Option<String>,
-        /// SSH key file for authentication
+        /// SSH key file for authentication (defaults to ~/.ssh/config identity files)
         #[arg(short, long)]
         keyfile: Option<String>,
         /// Connection timeout in seconds
@@ -931,7 +931,7 @@ async fn scan_command(
                 let device_config = network_discovery::discovered_device_to_config(
                     device,
                     username.clone(),
-                    keyfile.clone(),
+                    keyfile.as_ref(),
                 );
 
                 // Check if device already exists
