@@ -62,12 +62,13 @@ pub struct DeviceConfig {
     pub ssh_username: Option<String>,
     #[serde(default = "default_ssh_port")]
     pub ssh_port: NonZeroU16,
-    pub ssh_key_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_identity_files: Vec<PathBuf>,
     pub ssh_key_passphrase: Option<String>,
     pub last_interrogated: Option<String>, // ISO 8601 timestamp
     pub notes: Option<String>,
     #[serde(skip)]
-    pub resolved_ssh_key_paths: Vec<PathBuf>,
+    pub all_ssh_identity_files: Vec<PathBuf>,
     #[serde(skip)]
     pub ssh_config: Option<ssh::SshHostConfig>,
 }
@@ -83,11 +84,11 @@ impl Default for DeviceConfig {
             owner: Owner::Unknown,
             ssh_username: None,
             ssh_port: default_ssh_port(),
-            ssh_key_path: None,
+            ssh_identity_files: Vec::new(),
             ssh_key_passphrase: None,
             last_interrogated: None,
             notes: None,
-            resolved_ssh_key_paths: Vec::new(),
+            all_ssh_identity_files: Vec::new(),
             ssh_config: None,
         }
     }
@@ -105,9 +106,9 @@ impl DeviceConfig {
             .or_else(|| std::env::var("USER").ok())
     }
 
-    /// Get the resolved SSH key file paths for this device
-    pub fn get_resolved_ssh_key_paths(&self) -> &[PathBuf] {
-        &self.resolved_ssh_key_paths
+    /// Get all SSH identity files for this device (explicit + SSH config)
+    pub fn get_all_ssh_identity_files(&self) -> &[PathBuf] {
+        &self.all_ssh_identity_files
     }
 
     /// Check if SSH agent should be used for this device
@@ -400,10 +401,8 @@ impl AppConfig {
             // Collect all SSH key paths from various sources
             let mut ssh_key_paths = Vec::new();
 
-            // Add key from device config
-            if let Some(key_path) = &device_config.ssh_key_path {
-                ssh_key_paths.push(PathBuf::from(key_path));
-            }
+            // Add keys from device config
+            ssh_key_paths.extend(device_config.ssh_identity_files.clone());
 
             // Add keys from SSH config
             if let Some(ssh_host_config) = &device_config.ssh_config {
@@ -411,7 +410,7 @@ impl AppConfig {
             }
 
             // Resolve full paths and deduplicate
-            device_config.resolved_ssh_key_paths =
+            device_config.all_ssh_identity_files =
                 Self::resolve_and_deduplicate_key_paths(ssh_key_paths)?;
         }
 
@@ -794,9 +793,9 @@ Host *
             owner: Owner::Unknown,
             ssh_username: None,
             ssh_port: std::num::NonZeroU16::new(22).unwrap(),
-            ssh_key_path: None,
+            ssh_identity_files: Vec::new(),
             ssh_key_passphrase: None,
-            resolved_ssh_key_paths: Vec::new(),
+            all_ssh_identity_files: Vec::new(),
             ssh_config: None,
             last_interrogated: None,
             notes: None,
@@ -811,9 +810,9 @@ Host *
             owner: Owner::Unknown,
             ssh_username: None,
             ssh_port: std::num::NonZeroU16::new(22).unwrap(),
-            ssh_key_path: None,
+            ssh_identity_files: Vec::new(),
             ssh_key_passphrase: None,
-            resolved_ssh_key_paths: Vec::new(),
+            all_ssh_identity_files: Vec::new(),
             ssh_config: None,
             last_interrogated: None,
             notes: None,

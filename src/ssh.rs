@@ -79,9 +79,9 @@ impl SshClient {
             )
         })?;
 
-        // Get resolved SSH key paths
+        // Get all SSH identity files
         let key_paths: Vec<String> = device_config
-            .get_resolved_ssh_key_paths()
+            .get_all_ssh_identity_files()
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();

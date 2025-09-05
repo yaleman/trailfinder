@@ -160,31 +160,23 @@ pub async fn identify_device_via_ssh(
         ssh_port: std::num::NonZeroU16::new(config.port)
             .or_else(|| std::num::NonZeroU16::new(22))
             .ok_or_else(|| std::io::Error::other("Invalid SSH port"))?,
-        ssh_key_path: effective_keyfile.as_ref().map(|f| f.into()),
+        ssh_identity_files: effective_keyfile
+            .as_ref()
+            .map(|f| vec![f.into()])
+            .unwrap_or_default(),
         ssh_key_passphrase: None,
-        resolved_ssh_key_paths: Vec::new(),
+        all_ssh_identity_files: Vec::new(),
         ssh_config: host_config,
         last_interrogated: None,
         notes: None,
     };
 
     // Resolve SSH key paths to support multiple identity files
+    let mut all_keys = device_config.ssh_identity_files.clone();
     if let Some(ref ssh_config) = device_config.ssh_config {
-        device_config.resolved_ssh_key_paths = ssh_config.get_identity_files();
-    } else if let Some(ref key_path) = device_config.ssh_key_path {
-        device_config.resolved_ssh_key_paths = vec![key_path.clone()];
+        all_keys.extend(ssh_config.get_identity_files());
     }
-
-    // If we have explicit keyfile but also SSH config, combine them
-    // Prefer explicit keyfile first, then SSH config identity files
-    if config.keyfile.is_some() && !ssh_identity_files.is_empty() {
-        let mut all_keys = vec![];
-        if let Some(ref key_path) = device_config.ssh_key_path {
-            all_keys.push(key_path.clone());
-        }
-        all_keys.extend(ssh_identity_files);
-        device_config.resolved_ssh_key_paths = all_keys;
-    }
+    device_config.all_ssh_identity_files = all_keys;
 
     let socket_addr = SocketAddr::new(ip, config.port);
 
@@ -309,31 +301,23 @@ pub fn discovered_device_to_config(
         owner: crate::Owner::Unknown,
         ssh_username: effective_username,
         ssh_port: unsafe { std::num::NonZeroU16::new_unchecked(22) },
-        ssh_key_path: effective_keyfile.as_ref().map(|f| f.into()),
+        ssh_identity_files: effective_keyfile
+            .as_ref()
+            .map(|f| vec![f.into()])
+            .unwrap_or_default(),
         ssh_key_passphrase: None,
-        resolved_ssh_key_paths: Vec::new(),
+        all_ssh_identity_files: Vec::new(),
         ssh_config: host_config,
         last_interrogated: None,
         notes: Some("Discovered via network scan".to_string()),
     };
 
     // Resolve SSH key paths to support multiple identity files
+    let mut all_keys = device_config.ssh_identity_files.clone();
     if let Some(ref ssh_config) = device_config.ssh_config {
-        device_config.resolved_ssh_key_paths = ssh_config.get_identity_files();
-    } else if let Some(ref key_path) = device_config.ssh_key_path {
-        device_config.resolved_ssh_key_paths = vec![key_path.clone()];
+        all_keys.extend(ssh_config.get_identity_files());
     }
-
-    // If we have explicit keyfile but also SSH config, combine them
-    // Prefer explicit keyfile first, then SSH config identity files
-    if keyfile.is_some() && !ssh_identity_files.is_empty() {
-        let mut all_keys = vec![];
-        if let Some(ref key_path) = device_config.ssh_key_path {
-            all_keys.push(key_path.clone());
-        }
-        all_keys.extend(ssh_identity_files);
-        device_config.resolved_ssh_key_paths = all_keys;
-    }
+    device_config.all_ssh_identity_files = all_keys;
 
     device_config
 }

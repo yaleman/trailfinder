@@ -377,7 +377,7 @@ async fn identify_command(
             device_config.ssh_username = Some(cli_username.clone());
         }
         if let Some(ref cli_keyfile) = keyfile {
-            device_config.ssh_key_path = Some(cli_keyfile.into());
+            device_config.ssh_identity_files = vec![cli_keyfile.into()];
         }
         if let Some(ref cli_ip_address) = ip_address {
             match cli_ip_address.parse::<IpAddr>() {

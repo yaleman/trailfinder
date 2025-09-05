@@ -1173,7 +1173,7 @@ mod tests {
                 ip_address: Some("127.0.0.1".parse().unwrap()),
                 ssh_username: Some("test".to_string()),
                 ssh_port: std::num::NonZeroU16::new(22).unwrap(),
-                ssh_key_path: None,
+                ssh_identity_files: Vec::new(),
                 brand: Some(crate::config::DeviceBrand::Mikrotik),
                 device_type: Some(DeviceType::Router),
                 ..Default::default()
