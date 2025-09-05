@@ -27,6 +27,7 @@ use crate::ssh::SshError;
 pub mod brand;
 pub mod cli;
 pub mod config;
+pub mod network_discovery;
 pub mod pathfind;
 pub mod ssh;
 #[cfg(test)]
@@ -1085,7 +1086,9 @@ impl Device {
 
     /// Find an IPSec peer by its name (fallback for existing code)
     pub fn find_ipsec_peer_by_name(&self, peer_name: &str) -> Option<&IpsecPeer> {
-        self.ipsec_peers.iter().find(|peer| peer.peer_name == peer_name)
+        self.ipsec_peers
+            .iter()
+            .find(|peer| peer.peer_name == peer_name)
     }
 
     /// Get all IPSec peer IDs
@@ -1112,7 +1115,6 @@ impl Device {
         }
     }
 }
-
 
 #[cfg(test)]
 pub(crate) fn setup_test_logging() {

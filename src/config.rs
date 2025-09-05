@@ -23,6 +23,7 @@ fn default_ssh_port() -> NonZeroU16 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Device brand enumeration
+#[derive(PartialEq)]
 pub enum DeviceBrand {
     Unknown,
     Mikrotik,
@@ -222,6 +223,32 @@ impl AppConfig {
         self.devices
             .iter_mut()
             .find(|device| device.hostname == hostname)
+    }
+
+    /// Remove a device from configuration by hostname
+    /// Returns true if device was found and removed, false if not found
+    pub fn remove_device(&mut self, hostname: &str) -> bool {
+        let initial_len = self.devices.len();
+        self.devices.retain(|device| device.hostname != hostname);
+        self.devices.len() < initial_len
+    }
+
+    /// Remove a device and optionally its state file
+    pub fn remove_device_with_state(
+        &mut self,
+        hostname: &str,
+        delete_state: bool,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let device_removed = self.remove_device(hostname);
+
+        if device_removed && delete_state {
+            let state_file_path = self.get_state_file_path(hostname);
+            if state_file_path.exists() {
+                std::fs::remove_file(&state_file_path)?;
+            }
+        }
+
+        Ok(device_removed)
     }
 
     pub fn needs_identification(&self, hostname: &str) -> bool {
@@ -747,5 +774,70 @@ Host *
                 shellexpand::tilde("~/.ssh/random.com").to_string()
             )]
         );
+    }
+
+    #[test]
+    fn test_app_config_remove_device() {
+        use crate::config::{AppConfig, DeviceBrand, DeviceConfig};
+        use crate::{DeviceType, Owner};
+        use uuid::Uuid;
+
+        let mut app_config = AppConfig::default();
+
+        // Add test devices
+        let device1 = DeviceConfig {
+            device_id: Uuid::new_v4(),
+            hostname: "device1.example.com".to_string(),
+            ip_address: None,
+            brand: Some(DeviceBrand::Mikrotik),
+            device_type: Some(DeviceType::Router),
+            owner: Owner::Unknown,
+            ssh_username: None,
+            ssh_port: std::num::NonZeroU16::new(22).unwrap(),
+            ssh_key_path: None,
+            ssh_key_passphrase: None,
+            resolved_ssh_key_paths: Vec::new(),
+            ssh_config: None,
+            last_interrogated: None,
+            notes: None,
+        };
+
+        let device2 = DeviceConfig {
+            device_id: Uuid::new_v4(),
+            hostname: "device2.example.com".to_string(),
+            ip_address: None,
+            brand: Some(DeviceBrand::Cisco),
+            device_type: Some(DeviceType::Switch),
+            owner: Owner::Unknown,
+            ssh_username: None,
+            ssh_port: std::num::NonZeroU16::new(22).unwrap(),
+            ssh_key_path: None,
+            ssh_key_passphrase: None,
+            resolved_ssh_key_paths: Vec::new(),
+            ssh_config: None,
+            last_interrogated: None,
+            notes: None,
+        };
+
+        app_config.add_device(device1);
+        app_config.add_device(device2);
+
+        assert_eq!(app_config.devices.len(), 2);
+
+        // Test successful removal
+        let removed = app_config.remove_device("device1.example.com");
+        assert!(removed);
+        assert_eq!(app_config.devices.len(), 1);
+        assert_eq!(app_config.devices[0].hostname, "device2.example.com");
+
+        // Test removal of non-existent device
+        let removed = app_config.remove_device("nonexistent.example.com");
+        assert!(!removed);
+        assert_eq!(app_config.devices.len(), 1);
+
+        // Test removal of last device
+        let removed = app_config.remove_device("device2.example.com");
+        assert!(removed);
+        assert_eq!(app_config.devices.len(), 0);
     }
 }

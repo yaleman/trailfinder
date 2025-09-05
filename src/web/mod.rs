@@ -518,9 +518,13 @@ pub async fn get_network_topology(
 
                 // Check if remote hostname matches another device's hostname
                 if let Some(ref remote_hostname) = ipsec_peer.remote_hostname
-                    && other_device.device.hostname.contains(&remote_hostname.replace(".example.com", "")) {
-                        peer_matched = true;
-                    }
+                    && other_device
+                        .device
+                        .hostname
+                        .contains(&remote_hostname.replace(".example.com", ""))
+                {
+                    peer_matched = true;
+                }
 
                 // Check if remote IP matches another device's interface IP
                 if let Some(ref remote_ip) = ipsec_peer.remote_address {
@@ -540,7 +544,11 @@ pub async fn get_network_topology(
                     let connection_label = format!(
                         "IPSec-{} ({})",
                         ipsec_peer.peer_name,
-                        ipsec_peer.exchange_mode.as_ref().map(|mode| format!("{:?}", mode)).unwrap_or_else(|| "Unknown".to_string())
+                        ipsec_peer
+                            .exchange_mode
+                            .as_ref()
+                            .map(|mode| format!("{:?}", mode))
+                            .unwrap_or_else(|| "Unknown".to_string())
                     );
 
                     connections.push(NetworkConnection {

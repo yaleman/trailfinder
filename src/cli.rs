@@ -15,6 +15,7 @@ use crate::{
     DeviceType, TrailFinderError,
     brand::interrogate_device_by_brand,
     config::{AppConfig, DeviceBrand, DeviceConfig, DeviceState},
+    network_discovery::{self, ScanConfig},
     pathfind::{PathEndpoint, PathFindRequest, find_path},
     ssh::{DeviceIdentifier, SshClient},
     web::web_server_command,
@@ -106,6 +107,34 @@ enum Commands {
         /// Pretty print the JSON output
         #[arg(short, long)]
         pretty: bool,
+    },
+    /// Remove a device from configuration
+    Remove {
+        /// Hostname of device to remove
+        hostname: String,
+        /// Also remove device state file
+        #[arg(long)]
+        delete_state: bool,
+    },
+    /// Discover devices by scanning network targets
+    Scan {
+        /// IP addresses or CIDR networks to scan (e.g. 192.168.1.1 or 10.0.0.0/24)
+        targets: Vec<String>,
+        /// SSH port to test (default: 22)
+        #[arg(short, long, default_value = "22")]
+        port: u16,
+        /// SSH username for identification attempts
+        #[arg(short, long)]
+        username: Option<String>,
+        /// SSH key file for authentication
+        #[arg(short, long)]
+        keyfile: Option<String>,
+        /// Connection timeout in seconds
+        #[arg(short, long, default_value = "5")]
+        timeout: u64,
+        /// Add discovered devices to configuration automatically
+        #[arg(long)]
+        add: bool,
     },
 }
 
@@ -240,6 +269,32 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::ConfigDump { pretty } => {
             config_dump_command(&app_config, pretty)?;
+        }
+        Commands::Remove {
+            hostname,
+            delete_state,
+        } => {
+            remove_command(&mut app_config, config_path, &hostname, delete_state)?;
+        }
+        Commands::Scan {
+            targets,
+            port,
+            username,
+            keyfile,
+            timeout,
+            add,
+        } => {
+            scan_command(
+                &mut app_config,
+                config_path,
+                targets,
+                port,
+                username,
+                keyfile,
+                timeout,
+                add,
+            )
+            .await?;
         }
     }
 
@@ -785,6 +840,131 @@ fn config_dump_command(
     Ok(())
 }
 
+fn remove_command(
+    app_config: &mut AppConfig,
+    config_path: &PathBuf,
+    hostname: &str,
+    delete_state: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Removing device: {}", hostname);
+
+    let device_removed = app_config.remove_device_with_state(hostname, delete_state)?;
+
+    if device_removed {
+        if delete_state {
+            info!(
+                "Device '{}' and its state file removed from configuration",
+                hostname
+            );
+        } else {
+            info!(
+                "Device '{}' removed from configuration (state file preserved)",
+                hostname
+            );
+        }
+
+        // Save updated configuration
+        app_config.save_to_file(config_path)?;
+        info!("Configuration saved to {}", config_path.display());
+    } else {
+        warn!("Device '{}' not found in configuration", hostname);
+        return Err(format!("Device '{}' not found", hostname).into());
+    }
+
+    Ok(())
+}
+
+async fn scan_command(
+    app_config: &mut AppConfig,
+    config_path: &PathBuf,
+    targets: Vec<String>,
+    port: u16,
+    username: Option<String>,
+    keyfile: Option<String>,
+    timeout: u64,
+    add_devices: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Starting network scan of {} targets", targets.len());
+
+    let scan_config = ScanConfig {
+        port,
+        timeout_seconds: timeout,
+        username: username.clone(),
+        keyfile: keyfile.clone(),
+    };
+
+    let discovered_devices = network_discovery::scan_network_targets(targets, scan_config).await?;
+
+    // Display results
+    println!("\n📡 Network Scan Results");
+    println!("=======================");
+
+    let mut responsive_count = 0;
+    let mut identified_count = 0;
+    let mut added_count = 0;
+
+    for device in &discovered_devices {
+        if device.ssh_responsive {
+            responsive_count += 1;
+
+            println!("\n🌐 Device: {}", device.ip_address);
+
+            if device.identification_successful {
+                identified_count += 1;
+                println!(
+                    "  ✅ Brand: {:?}",
+                    device.brand.as_ref().unwrap_or(&DeviceBrand::Unknown)
+                );
+                println!(
+                    "  ✅ Type: {:?}",
+                    device.device_type.as_ref().unwrap_or(&DeviceType::Router)
+                );
+                if let Some(hostname) = &device.hostname {
+                    println!("  📝 Hostname: {}", hostname);
+                }
+            } else {
+                println!("  ⚠️  SSH responsive but identification failed");
+            }
+
+            // Add to configuration if requested and identification was successful
+            if add_devices && device.identification_successful {
+                let device_config = network_discovery::discovered_device_to_config(
+                    device,
+                    username.clone(),
+                    keyfile.clone(),
+                );
+
+                // Check if device already exists
+                if app_config.get_device(&device_config.hostname).is_none() {
+                    app_config.add_device(device_config);
+                    added_count += 1;
+                    println!("  ➕ Added to configuration");
+                } else {
+                    println!("  ⚠️  Already exists in configuration");
+                }
+            }
+        }
+    }
+
+    println!("\n📊 Scan Summary:");
+    println!("  Total targets scanned: {}", discovered_devices.len());
+    println!("  SSH responsive: {}", responsive_count);
+    println!("  Successfully identified: {}", identified_count);
+
+    if add_devices {
+        println!("  Added to configuration: {}", added_count);
+
+        if added_count > 0 {
+            app_config.save_to_file(config_path)?;
+            info!("Configuration saved to {}", config_path.display());
+        }
+    } else if identified_count > 0 {
+        println!("\n💡 Use --add flag to automatically add discovered devices to configuration");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1291,6 +1471,147 @@ mod tests {
                 assert_eq!(hostname, Some("router1".to_string()));
             }
             _ => panic!("Unexpected command variant"),
+        }
+
+        let remove_cmd = Commands::Remove {
+            hostname: "test-device".to_string(),
+            delete_state: true,
+        };
+        match remove_cmd {
+            Commands::Remove {
+                hostname,
+                delete_state,
+            } => {
+                assert_eq!(hostname, "test-device");
+                assert!(delete_state);
+            }
+            _ => panic!("Unexpected command variant"),
+        }
+
+        let scan_cmd = Commands::Scan {
+            targets: vec!["192.168.1.0/24".to_string()],
+            port: 22,
+            username: Some("admin".to_string()),
+            keyfile: None,
+            timeout: 5,
+            add: false,
+        };
+        match scan_cmd {
+            Commands::Scan {
+                targets,
+                port,
+                username,
+                timeout,
+                add,
+                ..
+            } => {
+                assert_eq!(targets, vec!["192.168.1.0/24"]);
+                assert_eq!(port, 22);
+                assert_eq!(username, Some("admin".to_string()));
+                assert_eq!(timeout, 5);
+                assert!(!add);
+            }
+            _ => panic!("Unexpected command variant"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_remove_command() {
+        // Test remove command parsing
+        let args = vec!["trailfinder", "remove", "test-device"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Remove {
+                hostname,
+                delete_state,
+            } => {
+                assert_eq!(hostname, "test-device");
+                assert!(!delete_state); // Default should be false
+            }
+            _ => panic!("Expected Remove command"),
+        }
+
+        // Test with delete-state flag
+        let args = vec!["trailfinder", "remove", "test-device", "--delete-state"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Remove {
+                hostname,
+                delete_state,
+            } => {
+                assert_eq!(hostname, "test-device");
+                assert!(delete_state);
+            }
+            _ => panic!("Expected Remove command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_scan_command() {
+        // Test basic scan command
+        let args = vec!["trailfinder", "scan", "192.168.1.1", "10.0.0.0/24"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Scan {
+                targets,
+                port,
+                timeout,
+                add,
+                ..
+            } => {
+                assert_eq!(targets, vec!["192.168.1.1", "10.0.0.0/24"]);
+                assert_eq!(port, 22); // Default
+                assert_eq!(timeout, 5); // Default
+                assert!(!add); // Default
+            }
+            _ => panic!("Expected Scan command"),
+        }
+
+        // Test with all options
+        let args = vec![
+            "trailfinder",
+            "scan",
+            "192.168.1.0/24",
+            "-p",
+            "2222",
+            "-u",
+            "admin",
+            "-k",
+            "/path/to/key",
+            "-t",
+            "10",
+            "--add",
+        ];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command.unwrap() {
+            Commands::Scan {
+                targets,
+                port,
+                username,
+                keyfile,
+                timeout,
+                add,
+            } => {
+                assert_eq!(targets, vec!["192.168.1.0/24"]);
+                assert_eq!(port, 2222);
+                assert_eq!(username, Some("admin".to_string()));
+                assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(timeout, 10);
+                assert!(add);
+            }
+            _ => panic!("Expected Scan command"),
         }
     }
 

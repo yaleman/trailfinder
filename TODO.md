@@ -12,7 +12,7 @@
 
 ### Enhanced CLI Features
 
-- [ ] Add device discovery via network scanning
+- [x] Add device discovery via network scanning
 
 ## Documentation
 

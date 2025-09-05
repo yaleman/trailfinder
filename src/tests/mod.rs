@@ -137,13 +137,13 @@ fn test_ipsec_peer_id_functionality() {
     // Test that new peer gets a unique ID
     let peer1 = IpsecPeer::new("test-peer-1".to_string());
     let peer2 = IpsecPeer::new("test-peer-2".to_string());
-    
+
     // Each peer should have a unique ID
     assert_ne!(peer1.peer_id, peer2.peer_id);
-    
+
     // Getter method should work
     assert_eq!(peer1.peer_id(), peer1.peer_id);
-    
+
     // Test with_peer_id method
     let custom_id = Uuid::new_v4();
     let peer3 = IpsecPeer::new("test-peer-3".to_string()).with_peer_id(custom_id);
@@ -156,24 +156,25 @@ fn test_device_peer_lookup_methods() {
     let peer2 = IpsecPeer::new("peer2".to_string());
     let peer1_id = peer1.peer_id;
     let peer2_id = peer2.peer_id;
-    
+
     let device = Device::new(
         "test-device".to_string(),
         None,
         Owner::Unknown,
-        DeviceType::Router
-    ).with_ipsec_peers(vec![peer1, peer2]);
-    
+        DeviceType::Router,
+    )
+    .with_ipsec_peers(vec![peer1, peer2]);
+
     // Test lookup by ID
     assert!(device.find_ipsec_peer_by_id(peer1_id).is_some());
     assert!(device.find_ipsec_peer_by_id(peer2_id).is_some());
     assert!(device.find_ipsec_peer_by_id(Uuid::new_v4()).is_none());
-    
+
     // Test lookup by name
     assert!(device.find_ipsec_peer_by_name("peer1").is_some());
     assert!(device.find_ipsec_peer_by_name("peer2").is_some());
     assert!(device.find_ipsec_peer_by_name("nonexistent").is_none());
-    
+
     // Test peer IDs collection
     let peer_ids = device.ipsec_peer_ids();
     assert_eq!(peer_ids.len(), 2);

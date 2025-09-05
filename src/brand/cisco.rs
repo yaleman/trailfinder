@@ -6,9 +6,9 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use super::prelude::*;
-use crate::{InterfaceAddress, IpsecPeer};
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
+use crate::{InterfaceAddress, IpsecPeer};
 
 pub struct Cisco {
     hostname: String,
