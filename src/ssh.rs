@@ -388,9 +388,13 @@ impl SshClient {
                     // Handle OpenSSH format
                     match passphrase {
                         Some(phrase) => {
-                            match PrivateKey::from_openssh(&key_data)
-                                .and_then(|k| k.decrypt(phrase))
-                            {
+                            match PrivateKey::from_openssh(&key_data).and_then(|k| {
+                                if k.is_encrypted() {
+                                    k.decrypt(phrase)
+                                } else {
+                                    Ok(k)
+                                }
+                            }) {
                                 Ok(key) => key,
                                 Err(e) => {
                                     debug!("Failed to decrypt OpenSSH key: {}", e);
