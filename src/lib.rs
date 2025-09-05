@@ -104,6 +104,7 @@ impl From<&str> for IpsecExchangeMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IpsecPeer {
+    pub peer_id: Uuid,
     /// Name of the IPSec peer as configured
     pub peer_name: String,
     /// Remote address/hostname of the peer
@@ -130,8 +131,10 @@ pub struct IpsecPeer {
 }
 
 impl IpsecPeer {
+    #[must_use]
     pub fn new(peer_name: String) -> Self {
         Self {
+            peer_id: Uuid::new_v4(),
             peer_name,
             remote_address: None,
             remote_hostname: None,
@@ -143,6 +146,18 @@ impl IpsecPeer {
             passive: false,
             comment: None,
         }
+    }
+
+    /// Get the unique peer identifier
+    #[must_use]
+    pub fn peer_id(&self) -> Uuid {
+        self.peer_id
+    }
+
+    /// Set the peer ID (useful for testing or loading from saved state)
+    pub fn with_peer_id(mut self, peer_id: Uuid) -> Self {
+        self.peer_id = peer_id;
+        self
     }
 }
 
@@ -1063,6 +1078,21 @@ impl Device {
             .find(|iface| iface.interface_id(&self.device_id) == interface_id)
     }
 
+    /// Find an IPSec peer by its unique peer ID
+    pub fn find_ipsec_peer_by_id(&self, peer_id: Uuid) -> Option<&IpsecPeer> {
+        self.ipsec_peers.iter().find(|peer| peer.peer_id == peer_id)
+    }
+
+    /// Find an IPSec peer by its name (fallback for existing code)
+    pub fn find_ipsec_peer_by_name(&self, peer_name: &str) -> Option<&IpsecPeer> {
+        self.ipsec_peers.iter().find(|peer| peer.peer_name == peer_name)
+    }
+
+    /// Get all IPSec peer IDs
+    pub fn ipsec_peer_ids(&self) -> Vec<Uuid> {
+        self.ipsec_peers.iter().map(|peer| peer.peer_id).collect()
+    }
+
     pub fn with_routes(self, routes: Vec<Route>) -> Self {
         Self { routes, ..self }
     }
@@ -1082,6 +1112,7 @@ impl Device {
         }
     }
 }
+
 
 #[cfg(test)]
 pub(crate) fn setup_test_logging() {

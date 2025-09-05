@@ -566,18 +566,11 @@ impl DeviceHandler for Mikrotik {
                 }
 
                 if !peer_name.is_empty() {
-                    let peer = IpsecPeer {
-                        peer_name: peer_name.clone(),
-                        remote_address,
-                        remote_hostname,
-                        local_identity: None,
-                        remote_identity: None,
-                        local_networks: Vec::new(),
-                        remote_networks: Vec::new(),
-                        exchange_mode,
-                        passive: false,
-                        comment,
-                    };
+                    let mut peer = IpsecPeer::new(peer_name.clone());
+                    peer.remote_address = remote_address;
+                    peer.remote_hostname = remote_hostname;
+                    peer.exchange_mode = exchange_mode;
+                    peer.comment = comment;
                     self.ipsec_peers.push(peer);
                 }
             } else if line.starts_with("/ip ipsec identity add") {
