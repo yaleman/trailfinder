@@ -403,9 +403,19 @@ impl SshClient {
                             }
                         }
                         None => match PrivateKey::from_openssh(&key_data) {
-                            Ok(key) => key,
+                            Ok(key) => {
+                                if key.is_encrypted() {
+                                    warn!(
+                                        "This OpenSSH key is encrypted but no passphrase was provided"
+                                    );
+                                    // TODO: prompt for passphrase here
+                                }
+                                key
+                            }
                             Err(e) => {
-                                debug!("Failed to load unencrypted OpenSSH key: {}", e);
+                                debug!(
+                                    "Failed to load OpenSSH key, no passphrase was provided: {e}",
+                                );
                                 return Ok(false);
                             }
                         },
