@@ -141,7 +141,7 @@ enum Commands {
     },
     /// Discover devices by scanning network targets
     Scan {
-        /// IP addresses or CIDR networks to scan (e.g. 192.168.1.1 or 10.0.0.0/24)
+        /// IP addresses, hostnames, or CIDR networks to scan (e.g. 192.168.1.1, router.local, or 10.0.0.0/24)
         targets: Vec<String>,
         /// SSH port to test (default: 22)
         #[arg(short, long, default_value = "22")]

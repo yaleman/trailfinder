@@ -618,11 +618,23 @@ pub mod ssh {
                     // Wildcard matches everything but has lowest priority
                     matches.push((pattern, config, 0));
                 } else if pattern.contains('*') {
-                    // Simple wildcard matching (only supports * at the end for now)
-                    if let Some(prefix) = pattern.strip_suffix('*')
-                        && hostname.starts_with(prefix)
-                    {
-                        matches.push((pattern, config, prefix.len()));
+                    // Wildcard matching - supports * at beginning, end, or both
+                    if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() > 2 {
+                        // Pattern has * at both ends (e.g., "*test*") - check this first
+                        let middle = &pattern[1..pattern.len()-1];
+                        if !middle.is_empty() && hostname.contains(middle) {
+                            matches.push((pattern, config, middle.len()));
+                        }
+                    } else if let Some(suffix) = pattern.strip_prefix('*') {
+                        // Pattern starts with * (e.g., "*ap.example.com")
+                        if hostname.ends_with(suffix) {
+                            matches.push((pattern, config, suffix.len()));
+                        }
+                    } else if let Some(prefix) = pattern.strip_suffix('*') {
+                        // Pattern ends with * (e.g., "host*")
+                        if hostname.starts_with(prefix) {
+                            matches.push((pattern, config, prefix.len()));
+                        }
                     }
                 }
             }
@@ -838,5 +850,99 @@ Host *
         let removed = app_config.remove_device("device2.example.com");
         assert!(removed);
         assert_eq!(app_config.devices.len(), 0);
+    }
+
+    #[test]
+    fn test_ssh_config_wildcard_suffix_patterns() {
+        // Test wildcard patterns that start with * (like *ap.example.com)
+        let config_content = r#"
+Host *ap.example.com
+    User apuser
+    IdentityFile ~/.ssh/unifi-ap
+
+Host *db.example.com
+    User dbuser
+    IdentityFile ~/.ssh/db-key
+
+Host test*
+    User testuser
+    IdentityFile ~/.ssh/test-key
+
+Host *middle*
+    User middleuser
+    IdentityFile ~/.ssh/middle-key
+
+Host *
+    User defaultuser
+    IdentityFile ~/.ssh/default
+"#;
+
+        let ssh_config = SshConfig::parse(config_content).expect("Should parse wildcard SSH config");
+
+        // Test suffix wildcard matching (*ap.example.com)
+        let testap_config = ssh_config.get_host_config("testap.example.com")
+            .expect("Should match *ap.example.com pattern");
+        assert_eq!(testap_config.user, Some("apuser".to_string()));
+        assert!(testap_config.get_identity_files().iter().any(|p| p.to_string_lossy().contains("unifi-ap")));
+
+        let othertestap_config = ssh_config.get_host_config("othertestap.example.com")
+            .expect("Should match *ap.example.com pattern");
+        assert_eq!(othertestap_config.user, Some("apuser".to_string()));
+
+        // Test another suffix wildcard (*db.example.com)
+        let mydb_config = ssh_config.get_host_config("mydb.example.com")
+            .expect("Should match *db.example.com pattern");
+        assert_eq!(mydb_config.user, Some("dbuser".to_string()));
+
+        // Test prefix wildcard (test*)
+        let testhost_config = ssh_config.get_host_config("testhost")
+            .expect("Should match test* pattern");
+        assert_eq!(testhost_config.user, Some("testuser".to_string()));
+
+        // Test middle wildcard (*middle*)
+        let somemiddlething_config = ssh_config.get_host_config("somemiddlething")
+            .expect("Should match *middle* pattern");
+        assert_eq!(somemiddlething_config.user, Some("middleuser".to_string()));
+
+        // Test that non-matching hostnames fall back to wildcard
+        let other_config = ssh_config.get_host_config("other.domain.com")
+            .expect("Should match * wildcard");
+        assert_eq!(other_config.user, Some("defaultuser".to_string()));
+    }
+
+    #[test]
+    fn test_ssh_config_wildcard_specificity() {
+        // Test that more specific patterns take precedence
+        let config_content = r#"
+Host *
+    User defaultuser
+    IdentityFile ~/.ssh/default
+
+Host *.example.com
+    User exampleuser
+    IdentityFile ~/.ssh/example
+
+Host *ap.example.com
+    User apuser
+    IdentityFile ~/.ssh/ap
+
+Host testap.example.com
+    User exactuser
+    IdentityFile ~/.ssh/exact
+"#;
+
+        let ssh_config = SshConfig::parse(config_content).expect("Should parse SSH config");
+
+        // Test exact match takes highest precedence
+        let exact_config = ssh_config.get_host_config("testap.example.com")
+            .expect("Should find exact match");
+        assert_eq!(exact_config.user, Some("exactuser".to_string()));
+
+        // Test more specific wildcard takes precedence over less specific
+        let ap_config = ssh_config.get_host_config("prodap.example.com")
+            .expect("Should match *ap.example.com");
+        assert_eq!(ap_config.user, Some("apuser".to_string()));
+        // Should also inherit from less specific patterns
+        assert!(ap_config.get_identity_files().len() >= 2); // Should have both ap and example keys
     }
 }

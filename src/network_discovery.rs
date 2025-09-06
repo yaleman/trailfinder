@@ -1,7 +1,8 @@
 //! Network discovery functionality for scanning IP ranges and discovering devices
 
 use std::{
-    net::{IpAddr, SocketAddr},
+    collections::HashSet,
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     time::Duration,
 };
 
@@ -45,9 +46,17 @@ impl Default for ScanConfig {
     }
 }
 
-/// Parse target strings (IP addresses or CIDR networks) into individual IP addresses
-pub fn parse_scan_targets(targets: &[String]) -> Result<Vec<IpAddr>, TrailFinderError> {
-    let mut ip_addresses = Vec::new();
+/// Information about a resolved scan target
+#[derive(Debug, Clone)]
+pub struct ResolvedTarget {
+    pub ip_address: IpAddr,
+    /// None if this was a direct IP/CIDR, Some if resolved from hostname
+    pub original_hostname: Option<String>,
+}
+
+/// Parse target strings (IP addresses, hostnames, or CIDR networks) into individual resolved targets
+pub fn parse_scan_targets(targets: &[String]) -> Result<Vec<ResolvedTarget>, TrailFinderError> {
+    let mut resolved_targets = Vec::new();
 
     for target in targets {
         if let Ok(cidr) = target.parse::<IpCidr>() {
@@ -64,19 +73,82 @@ pub fn parse_scan_targets(targets: &[String]) -> Result<Vec<IpAddr>, TrailFinder
                 )));
             }
 
-            ip_addresses.extend(hosts);
+            // CIDR targets don't have original hostnames
+            resolved_targets.extend(hosts.into_iter().map(|ip| ResolvedTarget {
+                ip_address: ip,
+                original_hostname: None,
+            }));
         } else if let Ok(ip) = target.parse::<IpAddr>() {
-            // Single IP address
-            ip_addresses.push(ip);
+            // Single IP address - no original hostname
+            resolved_targets.push(ResolvedTarget {
+                ip_address: ip,
+                original_hostname: None,
+            });
         } else {
-            return Err(TrailFinderError::Generic(format!(
-                "Invalid IP address or CIDR network: {}",
-                target
-            )));
+            // Try to resolve as hostname
+            match resolve_hostname(target) {
+                Ok(resolved_ips) => {
+                    info!(
+                        "Resolved hostname '{}' to {} address(es)",
+                        target,
+                        resolved_ips.len()
+                    );
+                    // Hostname targets preserve the original hostname
+                    resolved_targets.extend(resolved_ips.into_iter().map(|ip| ResolvedTarget {
+                        ip_address: ip,
+                        original_hostname: Some(target.clone()),
+                    }));
+                }
+                Err(e) => {
+                    return Err(TrailFinderError::Generic(format!(
+                        "Unable to resolve target '{}': {}",
+                        target, e
+                    )));
+                }
+            }
         }
     }
 
-    Ok(ip_addresses)
+    Ok(resolved_targets)
+}
+
+/// Resolve a hostname to one or more IP addresses
+fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>, TrailFinderError> {
+    debug!("Attempting to resolve hostname: {}", hostname);
+
+    // Use a dummy port for resolution - we only care about the IP addresses
+    let hostname_with_port = format!("{}:80", hostname);
+
+    match hostname_with_port.to_socket_addrs() {
+        Ok(socket_addrs) => {
+            let ips: Vec<IpAddr> = socket_addrs
+                .map(|addr| addr.ip())
+                .collect::<HashSet<_>>() // Remove duplicates
+                .into_iter()
+                .collect();
+
+            if ips.is_empty() {
+                Err(TrailFinderError::Generic(format!(
+                    "Hostname '{}' resolved to no addresses",
+                    hostname
+                )))
+            } else {
+                debug!(
+                    "Resolved '{}' to {}",
+                    hostname,
+                    ips.iter()
+                        .map(|ipaddr| ipaddr.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                Ok(ips)
+            }
+        }
+        Err(e) => Err(TrailFinderError::Generic(format!(
+            "Failed to resolve hostname '{}': {}",
+            hostname, e
+        ))),
+    }
 }
 
 /// Test if a host responds on the specified port
@@ -101,9 +173,10 @@ pub async fn test_tcp_connectivity(ip: IpAddr, port: u16, timeout_duration: Dura
 
 /// Attempt to identify a device via SSH
 pub async fn identify_device_via_ssh(
-    ip: IpAddr,
+    resolved_target: &ResolvedTarget,
     config: &ScanConfig,
 ) -> Result<DiscoveredDevice, TrailFinderError> {
+    let ip = resolved_target.ip_address;
     let mut discovered = DiscoveredDevice {
         ip_address: ip,
         hostname: None,
@@ -123,9 +196,16 @@ pub async fn identify_device_via_ssh(
 
     // Load SSH config for better integration
     let ssh_config = load_ssh_config()?;
-    let hostname = ip.to_string();
+
+    // Use original hostname if available, otherwise fall back to IP address
+    let ip_string = ip.to_string();
+    let hostname_for_ssh_config = resolved_target
+        .original_hostname
+        .as_ref()
+        .unwrap_or(&ip_string);
+
     let host_config = ssh_config
-        .get_host_config(&hostname)
+        .get_host_config(hostname_for_ssh_config)
         .or_else(|| ssh_config.get_host_config("*")); // Try wildcard match
 
     // Merge scan config with SSH config, preferring explicit scan config values
@@ -149,9 +229,15 @@ pub async fn identify_device_via_ssh(
     });
 
     // Create a temporary device config for SSH connection
+    // Use original hostname if available, otherwise use IP address
+    let hostname_for_device = resolved_target
+        .original_hostname
+        .clone()
+        .unwrap_or_else(|| ip.to_string());
+
     let mut device_config = DeviceConfig {
         device_id: Uuid::new_v4(),
-        hostname: hostname.clone(),
+        hostname: hostname_for_device.clone(),
         ip_address: Some(ip),
         brand: None,
         device_type: None,
@@ -191,12 +277,12 @@ pub async fn identify_device_via_ssh(
                     discovered.brand = Some(brand.clone());
                     discovered.device_type = Some(device_type);
                     discovered.identification_successful = true;
-                    discovered.hostname = Some(hostname);
+                    discovered.hostname = Some(hostname_for_device.clone());
                     info!("Identified device at {}: {:?} {:?}", ip, brand, device_type);
                 }
                 Err(e) => {
                     warn!("Device identification failed for {}: {}", ip, e);
-                    discovered.hostname = Some(hostname);
+                    discovered.hostname = Some(hostname_for_device.clone());
                 }
             }
         }
@@ -215,13 +301,16 @@ pub async fn scan_network_targets(
 ) -> Result<Vec<DiscoveredDevice>, TrailFinderError> {
     info!("Starting network scan of {} targets", targets.len());
 
-    let ip_addresses = parse_scan_targets(&targets)?;
-    info!("Expanded to {} IP addresses to scan", ip_addresses.len());
+    let resolved_targets = parse_scan_targets(&targets)?;
+    info!(
+        "Expanded to {} IP addresses to scan",
+        resolved_targets.len()
+    );
 
     let mut handles = Vec::new();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(50)); // Limit concurrent connections
 
-    for ip in ip_addresses {
+    for resolved_target in resolved_targets {
         let config = config.clone();
         let semaphore = semaphore.clone();
 
@@ -230,7 +319,7 @@ pub async fn scan_network_targets(
                 Ok(permit) => permit,
                 Err(_) => return None,
             };
-            (identify_device_via_ssh(ip, &config).await).ok()
+            (identify_device_via_ssh(&resolved_target, &config).await).ok()
         });
 
         handles.push(handle);
@@ -359,7 +448,11 @@ mod tests {
         let targets = vec!["192.168.1.1".to_string()];
         let result = parse_scan_targets(&targets).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "192.168.1.1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            result[0].ip_address,
+            "192.168.1.1".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(result[0].original_hostname, None);
     }
 
     #[test]
@@ -367,15 +460,83 @@ mod tests {
         let targets = vec!["192.168.1.0/30".to_string()];
         let result = parse_scan_targets(&targets).unwrap();
         assert_eq!(result.len(), 4); // /30 contains 4 addresses
-        assert!(result.contains(&"192.168.1.0".parse::<IpAddr>().unwrap()));
-        assert!(result.contains(&"192.168.1.3".parse::<IpAddr>().unwrap()));
+
+        let ips: Vec<IpAddr> = result.iter().map(|r| r.ip_address).collect();
+        assert!(ips.contains(&"192.168.1.0".parse::<IpAddr>().unwrap()));
+        assert!(ips.contains(&"192.168.1.3".parse::<IpAddr>().unwrap()));
+
+        // All should have no original hostname (direct CIDR)
+        assert!(result.iter().all(|r| r.original_hostname.is_none()));
     }
 
     #[test]
-    fn test_parse_scan_targets_invalid() {
-        let targets = vec!["invalid.address".to_string()];
+    fn test_parse_scan_targets_localhost_hostname() {
+        let targets = vec!["localhost".to_string()];
+        let result = parse_scan_targets(&targets).unwrap();
+        assert!(!result.is_empty());
+
+        let ips: Vec<IpAddr> = result.iter().map(|r| r.ip_address).collect();
+        // localhost should resolve to 127.0.0.1 and/or ::1
+        assert!(
+            ips.contains(&"127.0.0.1".parse::<IpAddr>().unwrap())
+                || ips.contains(&"::1".parse::<IpAddr>().unwrap())
+        );
+
+        // All should preserve the original hostname
+        assert!(
+            result
+                .iter()
+                .all(|r| r.original_hostname == Some("localhost".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_scan_targets_invalid_hostname() {
+        let targets = vec!["this-hostname-should-not-exist.invalid".to_string()];
         let result = parse_scan_targets(&targets);
         assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Unable to resolve target"));
+    }
+
+    #[test]
+    fn test_resolve_hostname_localhost() {
+        let result = resolve_hostname("localhost").unwrap();
+        assert!(!result.is_empty());
+        // localhost should resolve to at least one address
+        assert!(
+            result.contains(&"127.0.0.1".parse::<IpAddr>().unwrap())
+                || result.contains(&"::1".parse::<IpAddr>().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_hostname_invalid() {
+        let result = resolve_hostname("this-hostname-should-not-exist.invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_scan_targets_ipv6_direct() {
+        let targets = vec!["::1".to_string()];
+        let result = parse_scan_targets(&targets).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].ip_address, "::1".parse::<IpAddr>().unwrap());
+        assert_eq!(result[0].original_hostname, None);
+    }
+
+    #[test]
+    fn test_parse_scan_targets_mixed_ipv4_ipv6() {
+        let targets = vec!["127.0.0.1".to_string(), "::1".to_string()];
+        let result = parse_scan_targets(&targets).unwrap();
+        assert_eq!(result.len(), 2);
+
+        let ips: Vec<IpAddr> = result.iter().map(|r| r.ip_address).collect();
+        assert!(ips.contains(&"127.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(ips.contains(&"::1".parse::<IpAddr>().unwrap()));
+
+        // Both should have no original hostname (direct IPs)
+        assert!(result.iter().all(|r| r.original_hostname.is_none()));
     }
 
     #[test]
@@ -383,9 +544,32 @@ mod tests {
         let targets = vec![
             "192.168.1.1".to_string(),
             "10.0.0.0/31".to_string(), // Contains 2 addresses
+            "localhost".to_string(),   // Should resolve to at least 1 address
         ];
         let result = parse_scan_targets(&targets).unwrap();
-        assert_eq!(result.len(), 3); // 1 + 2 = 3
+        assert!(result.len() >= 4); // At least 1 + 2 + 1 = 4, but localhost might resolve to multiple addresses
+
+        let ips: Vec<IpAddr> = result.iter().map(|r| r.ip_address).collect();
+        // Check that we have the expected IP address
+        assert!(ips.contains(&"192.168.1.1".parse::<IpAddr>().unwrap()));
+        // Check that we have at least one localhost resolution
+        assert!(
+            ips.contains(&"127.0.0.1".parse::<IpAddr>().unwrap())
+                || ips.contains(&"::1".parse::<IpAddr>().unwrap())
+        );
+
+        // Check hostname preservation
+        let localhost_targets: Vec<_> = result
+            .iter()
+            .filter(|r| r.original_hostname == Some("localhost".to_string()))
+            .collect();
+        assert!(!localhost_targets.is_empty());
+
+        let direct_ip_targets: Vec<_> = result
+            .iter()
+            .filter(|r| r.original_hostname.is_none())
+            .collect();
+        assert!(direct_ip_targets.len() >= 3); // At least the direct IP + 2 CIDR addresses
     }
 
     #[test]
