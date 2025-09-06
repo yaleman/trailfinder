@@ -94,11 +94,17 @@ enum Commands {
         /// IP address to use for connection
         #[arg(short, long)]
         ip_address: Option<String>,
+        /// Use cached command responses instead of executing commands over SSH
+        #[arg(long)]
+        cached: bool,
     },
     /// Update device state from live devices, forcing fresh data collection
     Update {
         /// Specific device hostnames to update (updates all if none specified)
         devices: Vec<String>,
+        /// Use cached command responses instead of executing commands over SSH
+        #[arg(long)]
+        cached: bool,
     },
     /// Find network path between two IP addresses
     Pathfind {
@@ -158,6 +164,9 @@ enum Commands {
         /// Add discovered devices to configuration automatically
         #[arg(long)]
         add: bool,
+        /// Use cached command responses instead of executing commands over SSH
+        #[arg(long)]
+        cached: bool,
     },
 }
 
@@ -262,6 +271,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             username,
             keyfile,
             ip_address,
+            cached,
         } => {
             identify_command(
                 &mut app_config,
@@ -270,11 +280,12 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
                 username,
                 keyfile,
                 ip_address,
+                cached,
             )
             .await?;
         }
-        Commands::Update { devices } => {
-            update_command(&mut app_config, config_path, devices).await?;
+        Commands::Update { devices, cached } => {
+            update_command(&mut app_config, config_path, devices, cached).await?;
         }
         Commands::Pathfind {
             source_ip,
@@ -321,18 +332,18 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             keyfile,
             timeout,
             add,
+            cached,
         } => {
-            scan_command(
-                &mut app_config,
-                config_path,
+            let scan_options = ScanOptions {
                 targets,
                 port,
                 username,
                 keyfile,
                 timeout,
-                add,
-            )
-            .await?;
+                add_devices: add,
+                cached,
+            };
+            scan_command(&mut app_config, config_path, scan_options).await?;
         }
     }
 
@@ -346,6 +357,7 @@ async fn identify_command(
     username: Option<String>,
     keyfile: Option<String>,
     ip_address: Option<String>,
+    cached: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (devices_to_identify, new_device_hostname): (Vec<String>, Option<String>) =
         if let Some(hostname) = target_hostname {
@@ -428,7 +440,7 @@ async fn identify_command(
             }
         }
 
-        match identify_and_interrogate_device(device_config.clone()).await {
+        match identify_and_interrogate_device(device_config.clone(), cached).await {
             Ok((device_id, brand, device_type, device_state)) => {
                 info!("{device_id} Identified as {:?} {:?}", brand, device_type);
 
@@ -509,6 +521,7 @@ async fn update_command(
     app_config: &mut AppConfig,
     config_path: &PathBuf,
     specific_devices: Vec<String>,
+    cached: bool,
 ) -> Result<(), TrailFinderError> {
     // Determine which devices to update
     let devices_to_update: Vec<String> = if specific_devices.is_empty() {
@@ -556,7 +569,7 @@ async fn update_command(
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
         if let Some(device_config) = app_config.get_device(&hostname).cloned() {
-            tasks.spawn(identify_and_interrogate_device(device_config));
+            tasks.spawn(identify_and_interrogate_device(device_config, cached));
         }
     }
 
@@ -743,6 +756,7 @@ fn add_command(
 
 async fn identify_and_interrogate_device(
     device_config: DeviceConfig,
+    cached: bool,
 ) -> Result<(Uuid, DeviceBrand, DeviceType, DeviceState), TrailFinderError> {
     // Use IP address if provided, otherwise resolve hostname
     let socket_addr = if let Some(ip) = device_config.ip_address {
@@ -772,11 +786,17 @@ async fn identify_and_interrogate_device(
 
     debug!("Connecting via SSH using processed device config...");
 
-    // Use the new method that leverages preprocessed SSH configuration
-    let mut ssh_client =
+    // Use the regular SSH connection method - caching is now handled internally
+    let mut ssh_client = if cached {
+        // For cached mode, create a cache-only client
+        SshClient::new_cache_only(&device_config.hostname)
+            .map_err(|err| TrailFinderError::Generic(err.to_string()))?
+    } else {
+        // For normal mode, connect with SSH and enable automatic caching
         SshClient::connect_with_device_config(&device_config, socket_addr, timeout)
             .await
-            .map_err(|err| TrailFinderError::Generic(err.to_string()))?;
+            .map_err(|err| TrailFinderError::Generic(err.to_string()))?
+    };
 
     let (brand, device_type) = DeviceIdentifier::identify_device(&mut ssh_client).await?;
 
@@ -1017,26 +1037,37 @@ fn remove_command(
     Ok(())
 }
 
-async fn scan_command(
-    app_config: &mut AppConfig,
-    config_path: &PathBuf,
+#[derive(Debug)]
+struct ScanOptions {
     targets: Vec<String>,
     port: u16,
     username: Option<String>,
     keyfile: Option<String>,
     timeout: u64,
     add_devices: bool,
+    cached: bool,
+}
+
+async fn scan_command(
+    app_config: &mut AppConfig,
+    config_path: &PathBuf,
+    options: ScanOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting network scan of {} targets", targets.len());
+    if options.cached {
+        warn!("--cached flag is not yet implemented for scan command, ignoring");
+    }
+
+    info!("Starting network scan of {} targets", options.targets.len());
 
     let scan_config = ScanConfig {
-        port,
-        timeout_seconds: timeout,
-        username: username.clone(),
-        keyfile: keyfile.clone(),
+        port: options.port,
+        timeout_seconds: options.timeout,
+        username: options.username.clone(),
+        keyfile: options.keyfile.clone(),
     };
 
-    let discovered_devices = network_discovery::scan_network_targets(targets, scan_config).await?;
+    let discovered_devices =
+        network_discovery::scan_network_targets(options.targets, scan_config).await?;
 
     // Display results
     println!("\n📡 Network Scan Results");
@@ -1070,11 +1101,11 @@ async fn scan_command(
             }
 
             // Add to configuration if requested and identification was successful
-            if add_devices && device.identification_successful {
+            if options.add_devices && device.identification_successful {
                 let device_config = network_discovery::discovered_device_to_config(
                     device,
-                    username.clone(),
-                    keyfile.as_ref(),
+                    options.username.clone(),
+                    options.keyfile.as_ref(),
                 );
 
                 // Check if device already exists
@@ -1094,7 +1125,7 @@ async fn scan_command(
     println!("  SSH responsive: {}", responsive_count);
     println!("  Successfully identified: {}", identified_count);
 
-    if add_devices {
+    if options.add_devices {
         println!("  Added to configuration: {}", added_count);
 
         if added_count > 0 {
@@ -1193,11 +1224,13 @@ mod tests {
                 username,
                 keyfile,
                 ip_address,
+                cached,
             } => {
                 assert_eq!(hostname, Some("router1".to_string()));
                 assert_eq!(username, Some("admin".to_string()));
                 assert_eq!(keyfile, Some("/path/to/key".to_string()));
                 assert_eq!(ip_address, Some("192.168.1.1".to_string()));
+                assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Identify command"),
         }
@@ -1212,8 +1245,9 @@ mod tests {
 
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Update { devices } => {
+            Commands::Update { devices, cached } => {
                 assert_eq!(devices, vec!["router1", "switch1"]);
+                assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Update command"),
         }
@@ -1623,6 +1657,7 @@ mod tests {
             username: None,
             keyfile: None,
             ip_address: None,
+            cached: false,
         };
         match identify_cmd {
             Commands::Identify { hostname, .. } => {
@@ -1653,6 +1688,7 @@ mod tests {
             keyfile: None,
             timeout: 5,
             add: false,
+            cached: false,
         };
         match scan_cmd {
             Commands::Scan {
@@ -1834,6 +1870,7 @@ mod tests {
                 keyfile,
                 timeout,
                 add,
+                cached,
             } => {
                 assert_eq!(targets, vec!["192.168.1.0/24"]);
                 assert_eq!(port, 2222);
@@ -1841,6 +1878,7 @@ mod tests {
                 assert_eq!(keyfile, Some("/path/to/key".to_string()));
                 assert_eq!(timeout, 10);
                 assert!(add);
+                assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Scan command"),
         }

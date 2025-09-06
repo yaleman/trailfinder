@@ -5,8 +5,9 @@ use russh::{client, keys::ssh_key};
 
 use tracing::{debug, error, trace, warn};
 
+use crate::cache::CommandCache;
 use crate::config::ssh::SshConfig;
-use crate::{DeviceType, config::DeviceBrand};
+use crate::{DeviceType, TrailFinderError, config::DeviceBrand};
 
 #[derive(Debug, Clone)]
 pub enum AuthMethod {
@@ -29,6 +30,9 @@ pub struct SshConnectionInfo {
 pub struct SshClient {
     connection_info: SshConnectionInfo,
     session: Option<client::Handle<ClientHandler>>,
+    cache: Option<Arc<CommandCache>>,
+    hostname: String,
+    use_cache: bool,
 }
 
 #[derive(Debug)]
@@ -36,6 +40,7 @@ pub enum SshError {
     Connection(String),
     Authentication(String),
     Command(String),
+    Cache(String),
     Timeout,
 }
 
@@ -45,12 +50,19 @@ impl std::fmt::Display for SshError {
             SshError::Connection(msg) => write!(f, "Connection error: {}", msg),
             SshError::Authentication(msg) => write!(f, "Authentication error: {}", msg),
             SshError::Command(msg) => write!(f, "Command error: {}", msg),
+            SshError::Cache(msg) => write!(f, "Cache error: {}", msg),
             SshError::Timeout => write!(f, "Operation timed out"),
         }
     }
 }
 
 impl std::error::Error for SshError {}
+
+impl From<TrailFinderError> for SshError {
+    fn from(err: TrailFinderError) -> Self {
+        SshError::Cache(format!("Cache error: {}", err))
+    }
+}
 
 // Handler for russh client
 #[derive(Clone)]
@@ -67,6 +79,74 @@ impl client::Handler for ClientHandler {
     }
 }
 impl SshClient {
+    /// Create a cache-only client that doesn't establish SSH connections
+    pub fn new_cache_only(hostname: &str) -> Result<Self, TrailFinderError> {
+        let mut client = Self {
+            connection_info: SshConnectionInfo {
+                address: "0.0.0.0:22".parse().map_err(|e| {
+                    SshError::Connection(format!("Failed to parse dummy address: {}", e))
+                })?,
+                username: "cache-only".to_string(),
+                timeout: Duration::from_secs(0),
+                successful_auth: None,
+            },
+            session: None,
+            cache: None,
+            hostname: hostname.to_string(),
+            use_cache: true, // Always use cache in cache-only mode
+        };
+
+        client.initialize_cache()?;
+        Ok(client)
+    }
+
+    /// Connect to a device with caching support
+    pub async fn connect_with_device_config_and_cache(
+        device_config: &crate::config::DeviceConfig,
+        ip_address: SocketAddr,
+        timeout: Duration,
+        cache: Option<Arc<CommandCache>>,
+        use_cache: bool,
+    ) -> Result<Self, SshError> {
+        // If we're using cache and have cached data, create a cache-only client
+        if use_cache && let Some(cache_ref) = cache.as_ref() {
+            // Check if we have any cached data for this hostname
+            let has_cached_data = !cache_ref
+                .get_cached_hostnames()
+                .unwrap_or_default()
+                .is_empty();
+
+            if has_cached_data {
+                debug!(
+                    "Creating cache-only SSH client for hostname '{}'",
+                    device_config.hostname
+                );
+                return Ok(SshClient {
+                    connection_info: SshConnectionInfo {
+                        address: ip_address,
+                        username: device_config
+                            .get_effective_ssh_username()
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        timeout,
+                        successful_auth: None,
+                    },
+                    session: None, // No actual SSH session when using cache
+                    cache,
+                    hostname: device_config.hostname.clone(),
+                    use_cache: true,
+                });
+            }
+        }
+
+        // Connect normally if not using cache or no cached data available
+        let mut client =
+            Self::connect_with_device_config(device_config, ip_address, timeout).await?;
+        client.cache = cache;
+        client.hostname = device_config.hostname.clone();
+        client.use_cache = false; // We'll cache responses but not use cached responses
+        Ok(client)
+    }
+
     pub async fn connect_with_device_config(
         device_config: &crate::config::DeviceConfig,
         ip_address: SocketAddr,
@@ -98,7 +178,7 @@ impl SshClient {
             "Connecting with processed device config"
         );
 
-        Self::connect(
+        let mut client = Self::connect(
             ip_address,
             &username,
             None, // no password from config
@@ -107,7 +187,12 @@ impl SshClient {
             use_ssh_agent,
             timeout,
         )
-        .await
+        .await?;
+
+        // Set hostname and initialize cache for automatic response caching
+        client.hostname = device_config.hostname.clone();
+        client.initialize_cache()?;
+        Ok(client)
     }
 
     pub async fn connect_with_ssh_config(
@@ -182,7 +267,7 @@ impl SshClient {
             "SSH config loaded for host"
         );
 
-        Self::connect(
+        let mut client = Self::connect(
             ip_address,
             &username,
             None, // no password from config
@@ -191,7 +276,13 @@ impl SshClient {
             use_ssh_agent,
             timeout,
         )
-        .await
+        .await?;
+
+        // Set hostname and initialize cache for automatic response caching
+        client.hostname = hostname.to_string();
+        client.initialize_cache()?;
+
+        Ok(client)
     }
 
     fn load_ssh_config() -> Result<crate::config::ssh::SshConfig, SshError> {
@@ -243,6 +334,9 @@ impl SshClient {
                 successful_auth: None,
             },
             session: None,
+            cache: None,
+            hostname: address.ip().to_string(), // Default to IP as hostname
+            use_cache: false,
         }
     }
 
@@ -528,7 +622,88 @@ impl SshClient {
     }
 
     pub async fn execute_command(&mut self, command: &str) -> Result<String, SshError> {
+        self.execute_command_with_cache_mode(command, None).await
+    }
+
+    pub async fn execute_command_with_cache_mode(
+        &mut self,
+        command: &str,
+        force_cache_mode: Option<bool>,
+    ) -> Result<String, SshError> {
         debug!("Executing command: {}", command);
+
+        // Initialize cache if not present
+        if self.cache.is_none() {
+            self.initialize_cache()?;
+        }
+
+        // Determine cache mode: explicit override, or use client's setting
+        let use_cached_responses = force_cache_mode.unwrap_or(self.use_cache);
+
+        // If we're using cache, try to get response from cache first
+        if use_cached_responses {
+            if let Some(cache) = &self.cache {
+                match cache.get_cached_response(&self.hostname, command) {
+                    Ok(Some(cached_response)) => {
+                        debug!("Using cached response for command: {}", command);
+                        if cached_response.exit_code == 0 {
+                            return Ok(cached_response.output);
+                        } else {
+                            // For non-zero exit codes, we might want to return an error or the output
+                            // For now, return the output but log the exit code
+                            debug!(
+                                "Cached response had non-zero exit code: {}",
+                                cached_response.exit_code
+                            );
+                            return Ok(cached_response.output);
+                        }
+                    }
+                    Ok(None) => {
+                        debug!("No cached response found for command: {}", command);
+                        return Err(SshError::Cache(format!(
+                            "No cached response found for command '{}' on host '{}'",
+                            command, self.hostname
+                        )));
+                    }
+                    Err(e) => {
+                        debug!("Error accessing cache for command '{}': {}", command, e);
+                        return Err(SshError::Cache(format!("Error accessing cache: {}", e)));
+                    }
+                }
+            } else {
+                return Err(SshError::Cache(
+                    "Cache mode enabled but no cache available".to_string(),
+                ));
+            }
+        }
+
+        // Execute command normally (not using cache or caching responses)
+        let output = self.execute_command_live(command).await?;
+
+        // Always cache the response if we have a cache (for future use)
+        if let Some(cache) = &self.cache {
+            if let Err(e) = cache.cache_command_response(&self.hostname, command, &output, None, 0)
+            {
+                warn!("Failed to cache command response: {}", e);
+            } else {
+                debug!("Cached response for command: {}", command);
+            }
+        }
+
+        Ok(output)
+    }
+
+    fn initialize_cache(&mut self) -> Result<(), TrailFinderError> {
+        if self.cache.is_none() {
+            use std::sync::Arc;
+
+            self.cache = Some(Arc::new(crate::cache::CommandCache::new_default()?));
+        }
+        Ok(())
+    }
+
+    async fn execute_command_live(&mut self, command: &str) -> Result<String, SshError> {
+        debug!("Executing live command: {}", command);
 
         // Get the session or create a new one if needed
         let session = match &self.session {

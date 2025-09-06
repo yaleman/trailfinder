@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::ssh::SshError;
 
 pub mod brand;
+pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod network_discovery;
