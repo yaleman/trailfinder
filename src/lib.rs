@@ -34,12 +34,14 @@ pub mod ssh;
 mod tests;
 pub mod web;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq, Default)]
 pub enum DeviceType {
     Router,
     Switch,
     Firewall,
     AccessPoint,
+    #[default]
+    Unknown,
 }
 
 impl std::fmt::Display for DeviceType {
@@ -49,12 +51,14 @@ impl std::fmt::Display for DeviceType {
             DeviceType::Switch => write!(f, "Switch"),
             DeviceType::Firewall => write!(f, "Firewall"),
             DeviceType::AccessPoint => write!(f, "Access Point"),
+            DeviceType::Unknown => write!(f, "Unknown"),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum Owner {
+    #[default]
     Unknown,
     Named(String),
 }
@@ -183,7 +187,7 @@ pub enum Upstream {
     Gateway(IpAddr),
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, ToSchema, Clone)]
 pub enum InterfaceType {
     Ethernet,
     Vlan,
@@ -473,7 +477,7 @@ pub struct NeighborInfo {
     pub discovery_protocol: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub struct Interface {
     pub interface_id: Uuid,
     pub name: String,
@@ -1020,7 +1024,7 @@ pub enum RouteType {
     Local(Uuid),
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
 pub struct Route {
     pub route_type: RouteType,
     #[schema(value_type = String, example = "192.168.1.0/24")]

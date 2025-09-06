@@ -37,7 +37,9 @@ fn create_test_device_with_routes(
 
     DeviceState {
         device,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 12345u64,
     }
 }
@@ -472,13 +474,17 @@ fn test_topology_with_cdp_peer_relationships() {
     // Create device states
     let device_state1 = DeviceState {
         device: device1,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 12345u64,
     };
 
     let device_state2 = DeviceState {
         device: device2,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 67890u64,
     };
 
@@ -577,13 +583,17 @@ fn test_topology_with_vlan_cdp_relationships() {
     // Create device states
     let device_state1 = DeviceState {
         device: device1,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 12345u64,
     };
 
     let device_state2 = DeviceState {
         device: device2,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 67890u64,
     };
 
@@ -825,7 +835,9 @@ fn create_test_device_for_pathfinding(
 
     DeviceState {
         device,
-        timestamp: "2024-01-01T00:00:00Z".to_string(),
+        timestamp: "2024-01-01T00:00:00Z"
+            .parse()
+            .expect("Failed to parse timestamp"),
         config_hash: 12345u64,
     }
 }

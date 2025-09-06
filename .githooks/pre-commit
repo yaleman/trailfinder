@@ -6,10 +6,10 @@ LINES=$(echo "${RESULT}" | grep -cv '^$' )
 if [ "$LINES" -gt 0 ]; then
     echo "Found ${LINES} references in the following files to housenet.yaleman.org, please replace them with the 'example.com' domain:"
     echo "'${RESULT}'"
-    exit 1
+    exit 2
 fi
 
 cargo clippy --quiet --all-targets || {
     echo "The above came from running cargo clippy, please review them and correct outstanding issues before continuing"
-    exit 1
+    exit 2
 }

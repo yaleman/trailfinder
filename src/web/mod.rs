@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tower_http::{
@@ -102,7 +103,7 @@ pub struct DeviceSummary {
     pub brand: Option<String>,
     pub interface_count: usize,
     pub route_count: usize,
-    pub last_seen: Option<String>,
+    pub last_seen: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -264,7 +265,7 @@ pub async fn list_devices(
             Ok(state) => (
                 state.device.interfaces.len(),
                 state.device.routes.len(),
-                Some(state.timestamp.clone()),
+                Some(state.timestamp),
                 state.device.device_id.to_string(),
             ),
             Err(e) => {

@@ -1,14 +1,4 @@
-use cidr::IpCidr;
-use regex::Regex;
-use std::net::IpAddr;
-use std::str::FromStr;
-use tracing::{debug, error, info, trace, warn};
-use uuid::Uuid;
-
 use super::prelude::*;
-use crate::config::{DeviceConfig, DeviceState};
-use crate::ssh::SshClient;
-use crate::{InterfaceAddress, IpsecPeer};
 
 pub struct Cisco {
     hostname: String,

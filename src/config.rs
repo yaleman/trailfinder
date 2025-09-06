@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -125,8 +126,8 @@ impl DeviceConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceState {
     pub device: Device,
-    pub timestamp: String, // ISO 8601 timestamp
-    pub config_hash: u64,  // Hash of the raw configuration for change detection
+    pub timestamp: chrono::DateTime<Utc>, // ISO 8601 timestamp
+    pub config_hash: u64,                 // Hash of the raw configuration for change detection
 }
 
 impl DeviceState {
@@ -137,7 +138,7 @@ impl DeviceState {
 
         Self {
             device,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: chrono::Utc::now(),
             config_hash,
         }
     }
@@ -621,7 +622,7 @@ pub mod ssh {
                     // Wildcard matching - supports * at beginning, end, or both
                     if pattern.starts_with('*') && pattern.ends_with('*') && pattern.len() > 2 {
                         // Pattern has * at both ends (e.g., "*test*") - check this first
-                        let middle = &pattern[1..pattern.len()-1];
+                        let middle = &pattern[1..pattern.len() - 1];
                         if !middle.is_empty() && hostname.contains(middle) {
                             matches.push((pattern, config, middle.len()));
                         }
@@ -877,35 +878,47 @@ Host *
     IdentityFile ~/.ssh/default
 "#;
 
-        let ssh_config = SshConfig::parse(config_content).expect("Should parse wildcard SSH config");
+        let ssh_config =
+            SshConfig::parse(config_content).expect("Should parse wildcard SSH config");
 
         // Test suffix wildcard matching (*ap.example.com)
-        let testap_config = ssh_config.get_host_config("testap.example.com")
+        let testap_config = ssh_config
+            .get_host_config("testap.example.com")
             .expect("Should match *ap.example.com pattern");
         assert_eq!(testap_config.user, Some("apuser".to_string()));
-        assert!(testap_config.get_identity_files().iter().any(|p| p.to_string_lossy().contains("unifi-ap")));
+        assert!(
+            testap_config
+                .get_identity_files()
+                .iter()
+                .any(|p| p.to_string_lossy().contains("unifi-ap"))
+        );
 
-        let othertestap_config = ssh_config.get_host_config("othertestap.example.com")
+        let othertestap_config = ssh_config
+            .get_host_config("othertestap.example.com")
             .expect("Should match *ap.example.com pattern");
         assert_eq!(othertestap_config.user, Some("apuser".to_string()));
 
         // Test another suffix wildcard (*db.example.com)
-        let mydb_config = ssh_config.get_host_config("mydb.example.com")
+        let mydb_config = ssh_config
+            .get_host_config("mydb.example.com")
             .expect("Should match *db.example.com pattern");
         assert_eq!(mydb_config.user, Some("dbuser".to_string()));
 
         // Test prefix wildcard (test*)
-        let testhost_config = ssh_config.get_host_config("testhost")
+        let testhost_config = ssh_config
+            .get_host_config("testhost")
             .expect("Should match test* pattern");
         assert_eq!(testhost_config.user, Some("testuser".to_string()));
 
         // Test middle wildcard (*middle*)
-        let somemiddlething_config = ssh_config.get_host_config("somemiddlething")
+        let somemiddlething_config = ssh_config
+            .get_host_config("somemiddlething")
             .expect("Should match *middle* pattern");
         assert_eq!(somemiddlething_config.user, Some("middleuser".to_string()));
 
         // Test that non-matching hostnames fall back to wildcard
-        let other_config = ssh_config.get_host_config("other.domain.com")
+        let other_config = ssh_config
+            .get_host_config("other.domain.com")
             .expect("Should match * wildcard");
         assert_eq!(other_config.user, Some("defaultuser".to_string()));
     }
@@ -934,12 +947,14 @@ Host testap.example.com
         let ssh_config = SshConfig::parse(config_content).expect("Should parse SSH config");
 
         // Test exact match takes highest precedence
-        let exact_config = ssh_config.get_host_config("testap.example.com")
+        let exact_config = ssh_config
+            .get_host_config("testap.example.com")
             .expect("Should find exact match");
         assert_eq!(exact_config.user, Some("exactuser".to_string()));
 
         // Test more specific wildcard takes precedence over less specific
-        let ap_config = ssh_config.get_host_config("prodap.example.com")
+        let ap_config = ssh_config
+            .get_host_config("prodap.example.com")
             .expect("Should match *ap.example.com");
         assert_eq!(ap_config.user, Some("apuser".to_string()));
         // Should also inherit from less specific patterns

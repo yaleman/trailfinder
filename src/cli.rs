@@ -44,7 +44,7 @@ struct Cli {
     config_path: PathBuf,
 
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
@@ -224,12 +224,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Handle different commands
-    match cli.command.unwrap_or(Commands::Identify {
-        hostname: None,
-        username: None,
-        keyfile: None,
-        ip_address: None,
-    }) {
+    match cli.command {
         Commands::Add {
             hostname,
             ip_address,
@@ -659,22 +654,27 @@ fn add_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if device already exists
     if app_config.get_device(params.hostname).is_some() {
-        return Err(format!("Device '{}' already exists in configuration", params.hostname).into());
+        return Err(format!(
+            "Device '{}' already exists in configuration",
+            params.hostname
+        )
+        .into());
     }
 
     // Parse IP address if provided
     let parsed_ip = if let Some(ip_str) = params.ip_address {
-        Some(ip_str.parse::<IpAddr>().map_err(|e| {
-            format!("Invalid IP address '{}': {}", ip_str, e)
-        })?)
+        Some(
+            ip_str
+                .parse::<IpAddr>()
+                .map_err(|e| format!("Invalid IP address '{}': {}", ip_str, e))?,
+        )
     } else {
         None
     };
 
     // Parse SSH port
-    let ssh_port = std::num::NonZeroU16::new(params.port).ok_or_else(|| {
-        format!("Invalid SSH port '{}': port must be non-zero", params.port)
-    })?;
+    let ssh_port = std::num::NonZeroU16::new(params.port)
+        .ok_or_else(|| format!("Invalid SSH port '{}': port must be non-zero", params.port))?;
 
     // Parse owner
     let device_owner = match params.owner.as_deref() {
@@ -687,7 +687,7 @@ fn add_command(
         device_id: Uuid::new_v4(),
         hostname: params.hostname.to_string(),
         ip_address: parsed_ip,
-        brand: None, // Will be set during identification
+        brand: None,       // Will be set during identification
         device_type: None, // Will be set during identification
         owner: device_owner,
         ssh_username: params.username.clone(),
@@ -715,7 +715,10 @@ fn add_command(
     // Save updated configuration
     app_config.save_to_file(config_path)?;
 
-    info!("✅ Device '{}' added successfully to configuration", params.hostname);
+    info!(
+        "✅ Device '{}' added successfully to configuration",
+        params.hostname
+    );
     if let Some(ip_addr) = params.ip_address {
         info!("   IP address: {}", ip_addr);
     }
@@ -729,8 +732,11 @@ fn add_command(
     if let Some(device_notes) = params.notes {
         info!("   Notes: {}", device_notes);
     }
-    
-    info!("💡 Use 'identify {}' to automatically detect device type and brand", params.hostname);
+
+    info!(
+        "💡 Use 'identify {}' to automatically detect device type and brand",
+        params.hostname
+    );
 
     Ok(())
 }
@@ -1154,7 +1160,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Web { port, address } => {
                 assert_eq!(port, 8080);
                 assert_eq!(address, "0.0.0.0");
@@ -1181,7 +1187,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Identify {
                 hostname,
                 username,
@@ -1205,7 +1211,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Update { devices } => {
                 assert_eq!(devices, vec!["router1", "switch1"]);
             }
@@ -1238,7 +1244,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Pathfind {
                 source_ip,
                 destination_ip,
@@ -1284,9 +1290,7 @@ mod tests {
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
 
-        let cli = cli.unwrap();
-        // The command should be None, which gets converted to default Identify in main_func
-        assert!(cli.command.is_none());
+        let _cli = cli.expect("Failed to parse cli commands");
     }
 
     #[test]
@@ -1549,7 +1553,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::ConfigDump { pretty } => {
                 assert!(pretty);
             }
@@ -1562,7 +1566,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::ConfigDump { pretty } => {
                 assert!(!pretty);
             }
@@ -1677,7 +1681,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Remove {
                 hostname,
                 delete_state,
@@ -1694,7 +1698,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Remove {
                 hostname,
                 delete_state,
@@ -1714,7 +1718,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Add {
                 hostname,
                 ip_address,
@@ -1757,7 +1761,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Add {
                 hostname,
                 ip_address,
@@ -1787,7 +1791,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Scan {
                 targets,
                 port,
@@ -1822,7 +1826,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        match cli.command.unwrap() {
+        match cli.command {
             Commands::Scan {
                 targets,
                 port,
@@ -1889,7 +1893,7 @@ mod tests {
         let result = add_command(&mut app_config, &config_path, &params);
         assert!(result.is_ok());
         assert_eq!(app_config.devices.len(), 2);
-        
+
         let new_device = &app_config.devices[1];
         assert_eq!(new_device.hostname, "router1.example.com");
         assert_eq!(new_device.ip_address, Some("192.168.1.1".parse().unwrap()));

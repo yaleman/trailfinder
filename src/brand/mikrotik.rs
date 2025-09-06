@@ -1,15 +1,4 @@
-use cidr::IpCidr;
-use regex::Regex;
-use tracing::debug;
-use tracing::error;
-use tracing::info;
-use uuid::Uuid;
-
 use super::prelude::*;
-use crate::config::{DeviceConfig, DeviceState};
-use crate::{InterfaceAddress, IpsecPeer};
-
-use crate::ssh::SshClient;
 
 pub struct Mikrotik {
     hostname: String,
@@ -62,8 +51,7 @@ impl DeviceHandler for Mikrotik {
         debug!("input_data: {input_data}");
 
         #[allow(clippy::expect_used)]
-        let comment_finder = regex::Regex::new(r#";;; (?P<comment>.*?) name=""#)
-            .expect("Failed to compile comment-finder regex");
+        let comment_finder = regex::Regex::new(r#";;; (?P<comment>.*?) name=""#)?;
 
         let mut current_line = String::new();
         let lines = input_data.lines();
