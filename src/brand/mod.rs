@@ -3,6 +3,7 @@
 pub mod cisco;
 pub mod mikrotik;
 pub(crate) mod prelude;
+pub mod ubiquiti;
 
 use crate::config::{DeviceConfig, DeviceState};
 use crate::ssh::SshClient;
@@ -55,7 +56,7 @@ pub async fn interrogate_device_by_brand(
     match brand {
         DeviceBrand::Mikrotik => {
             let interrogator = mikrotik::Mikrotik::new(
-                "temp".to_string(),
+                device_config.hostname.clone(),
                 None,
                 Owner::Unknown,
                 DeviceType::Router,
@@ -65,8 +66,23 @@ pub async fn interrogate_device_by_brand(
                 .await
         }
         DeviceBrand::Cisco => {
-            let interrogator =
-                cisco::Cisco::new("temp".to_string(), None, Owner::Unknown, DeviceType::Router);
+            let interrogator = cisco::Cisco::new(
+                device_config.hostname.clone(),
+                None,
+                Owner::Unknown,
+                DeviceType::Router,
+            );
+            interrogator
+                .interrogate_device(ssh_client, device_config, device_type)
+                .await
+        }
+        DeviceBrand::Ubiquiti => {
+            let interrogator = ubiquiti::Ubiquiti::new(
+                device_config.hostname.clone(),
+                None,
+                Owner::Unknown,
+                DeviceType::Unknown,
+            );
             interrogator
                 .interrogate_device(ssh_client, device_config, device_type)
                 .await

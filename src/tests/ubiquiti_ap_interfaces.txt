@@ -1,0 +1,46 @@
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,ALLMULTI,PROMISC,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast master br0 state UP group default qlen 1000
+    link/ether b4:fb:e4:49:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet6 fe80::b6fb:e4ff:fe49:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+3: teql0: <NOARP> mtu 1500 qdisc noop state DOWN group default qlen 100
+    link/void
+4: wifi0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UNKNOWN group default qlen 539
+    link/ieee802.11 b4:fb:e4:4a:bf:0f brd ff:ff:ff:ff:ff:ff
+5: wifi1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UNKNOWN group default qlen 539
+    link/ieee802.11 b4:fb:e4:4b:bf:0f brd ff:ff:ff:ff:ff:ff
+6: ath0: <BROADCAST,MULTICAST,ALLMULTI,PROMISC,UP,LOWER_UP> mtu 1500 qdisc noqueue master br0 state UNKNOWN group default
+    link/ether b4:fb:e4:4a:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet6 fe80::b6fb:e4ff:fe4a:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+7: ath1: <BROADCAST,MULTICAST,ALLMULTI,PROMISC,UP,LOWER_UP> mtu 1500 qdisc noqueue master br0.20 state UNKNOWN group default
+    link/ether ba:fb:e4:4a:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet6 fe80::b8fb:e4ff:fe4a:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+8: ath2: <BROADCAST,MULTICAST,ALLMULTI,PROMISC,UP,LOWER_UP> mtu 1500 qdisc noqueue master br0 state UNKNOWN group default
+    link/ether b4:fb:e4:4b:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet6 fe80::b6fb:e4ff:fe4b:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+9: ath3: <BROADCAST,MULTICAST,ALLMULTI,PROMISC,UP,LOWER_UP> mtu 1500 qdisc noqueue master br0.20 state UNKNOWN group default
+    link/ether ba:fb:e4:4b:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet6 fe80::b8fb:e4ff:fe4b:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+10: eth0.20@eth0: <BROADCAST,MULTICAST,ALLMULTI,UP,LOWER_UP> mtu 1500 qdisc noqueue master br0.20 state UP group default qlen 1000
+    link/ether b4:fb:e4:49:bf:0f brd ff:ff:ff:ff:ff:ff
+11: br0: <BROADCAST,MULTICAST,ALLMULTI,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether b4:fb:e4:49:bf:0f brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.101/24 brd 10.0.0.255 scope global br0
+       valid_lft forever preferred_lft forever
+    inet6 fda9:6ace:a418:674e:b6fb:e4ff:fe49:bf0f/64 scope global mngtmpaddr dynamic
+       valid_lft 1780sec preferred_lft 1780sec
+    inet6 2001:cafe:b33f::b6fb:e4ff:fe49:bf0f/64 scope global mngtmpaddr dynamic
+       valid_lft 2591555sec preferred_lft 604355sec
+    inet6 fe80::b6fb:e4ff:fe49:bf0f/64 scope link
+       valid_lft forever preferred_lft forever
+12: br0.20: <BROADCAST,MULTICAST,ALLMULTI,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether b4:fb:e4:49:bf:0f brd ff:ff:ff:ff:ff:ff

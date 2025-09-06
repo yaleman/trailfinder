@@ -723,6 +723,45 @@ impl DeviceIdentifier {
             }
         }
 
+        match ssh_client
+            .execute_command(crate::brand::ubiquiti::GET_BOARD_INFO)
+            .await
+        {
+            Ok(output) => {
+                debug!(
+                    "Ubiquiti command '{}' output: '{}'",
+                    crate::brand::ubiquiti::GET_BOARD_INFO,
+                    output.trim()
+                );
+                if output.to_lowercase().contains("ubnt")
+                    || output.to_lowercase().contains("ubiquiti")
+                    || output.to_lowercase().contains("edgeos")
+                    || output.to_lowercase().contains("unifi")
+                    || output.contains("board.name")
+                {
+                    debug!(
+                        "Detected Ubiquiti device from command '{}'",
+                        crate::brand::ubiquiti::GET_BOARD_INFO
+                    );
+                    // Further type detection can be done by parsing board info
+                    // TODO: this is terrible but a start{
+                    let device_type = if output.to_lowercase().contains("ap") {
+                        DeviceType::AccessPoint
+                    } else {
+                        DeviceType::Router // Default to router for now
+                    };
+                    return Ok((DeviceBrand::Ubiquiti, device_type));
+                }
+            }
+            Err(e) => {
+                debug!(
+                    "Ubiquiti identification with command '{}' failed: {}",
+                    crate::brand::ubiquiti::GET_BOARD_INFO,
+                    e
+                );
+            }
+        }
+
         debug!("No device identification successful, defaulting to Unknown");
         Ok((DeviceBrand::Unknown, DeviceType::Router))
     }

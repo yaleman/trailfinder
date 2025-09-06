@@ -1,0 +1,42 @@
+{
+  "lldp": {
+    "interface": [
+      {
+        "eth0": {
+          "via": "LLDP",
+          "rid": "2",
+          "age": "179 days, 07:01:29",
+          "chassis": {
+            "C3650.example.com": {
+              "id": {
+                "type": "mac",
+                "value": "a0:23:9f:2b:b3:3f"
+              },
+              "descr": "Cisco IOS Software [Gibraltar], Catalyst L3 Switch Software (CAT3K_CAA-UNIVERSALK9-M), Version 16.12.11, RELEASE SOFTWARE (fc2)\nTechnical Support: http://www.cisco.com/techsupport\nCopyright (c) 1986-2024 by Cisco Systems, Inc.\nCompiled Sun 31-Mar-24 12:30",
+              "mgmt-ip": "10.0.99.2",
+              "capability": [
+                {
+                  "type": "Bridge",
+                  "enabled": true
+                },
+                {
+                  "type": "Router",
+                  "enabled": false
+                }
+              ]
+            }
+          },
+          "port": {
+            "id": {
+              "type": "ifname",
+              "value": "Gi1/0/47"
+            },
+            "descr": "UniFi AP",
+            "ttl": "120"
+          }
+        }
+      }
+    ]
+  }
+}
+
