@@ -5088,9 +5088,9 @@ dependencies = [
 
 [[package]]
 name = "terminator-rs"
-version = "0.12.14"
+version = "0.13.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d47e4d2ad605ab1a97f45a4680db569c9973bf886f1ace7bcc6afe9dda8e5505"
+checksum = "f6819c4d90559b6b8febdc4deefa0616ce64dd0d0b5ccd0e14dd7ae181b5e93d"
 dependencies = [
  "accessibility",
  "accessibility-sys",
