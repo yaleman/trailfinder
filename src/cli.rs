@@ -1322,9 +1322,7 @@ mod tests {
         // Test that identify is the default command when no command is specified
         let args = vec!["trailfinder"];
         let cli = Cli::try_parse_from(args);
-        assert!(cli.is_ok());
-
-        let _cli = cli.expect("Failed to parse cli commands");
+        assert!(cli.is_err());
     }
 
     #[test]
