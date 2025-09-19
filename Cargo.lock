@@ -1387,7 +1387,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5076,14 +5076,14 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
 name = "terminator-rs"
-version = "0.13.9"
+version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2e6e9d5d6354f43a28f9747a7465646d273efe753c4596daa232ae638997dd2"
+checksum = "59c6721c1d3cb4106cae839d8c476ca32653d6ccfb276d38dde957e78ee33bca"
 dependencies = [
  "accessibility",
  "accessibility-sys",
