@@ -48,7 +48,7 @@ pub trait DeviceHandler {
 use crate::config::DeviceBrand;
 
 pub async fn interrogate_device_by_brand(
-    brand: DeviceBrand,
+    brand: &DeviceBrand,
     ssh_client: &mut SshClient,
     device_config: &DeviceConfig,
     device_type: DeviceType,

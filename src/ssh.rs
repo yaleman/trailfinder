@@ -914,6 +914,8 @@ impl DeviceIdentifier {
                     // TODO: this is terrible but a start{
                     let device_type = if output.to_lowercase().contains("ap") {
                         DeviceType::AccessPoint
+                    } else if output.contains("US") {
+                        DeviceType::Switch
                     } else {
                         DeviceType::Router // Default to router for now
                     };

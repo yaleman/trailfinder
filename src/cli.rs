@@ -25,26 +25,16 @@ use uuid::Uuid;
 
 pub const DEFAULT_CONFIG_FILE: &str = "devices.json";
 
-/// Apply CLI SSH parameters to device config and optionally prompt to save changes
-fn apply_ssh_params_with_prompts(
+/// Apply CLI SSH parameters to device config without prompting (for runtime use)
+fn apply_ssh_params_no_prompts(
     device_config: &mut DeviceConfig,
     username: &Option<String>,
     keyfile: &Option<String>,
     key_passphrase: &Option<String>,
-    prompt_save: bool,
-    app_config: &mut AppConfig,
-    config_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut changes_made = false;
-    let mut changes_to_save = Vec::new();
-
+) {
     // Apply CLI username
-    if let Some(cli_username) = username
-        && device_config.ssh_username.as_ref() != Some(cli_username)
-    {
+    if let Some(cli_username) = username {
         device_config.ssh_username = Some(cli_username.clone());
-        changes_made = true;
-        changes_to_save.push(format!("username: {}", cli_username));
     }
 
     // Apply CLI keyfile
@@ -56,25 +46,50 @@ fn apply_ssh_params_with_prompts(
         device_config
             .all_ssh_identity_files
             .insert(0, cli_keyfile_path);
-        changes_made = true;
-        changes_to_save.push(format!("keyfile: {}", cli_keyfile));
     }
 
     // Apply CLI passphrase
-    if let Some(cli_passphrase) = key_passphrase
-        && device_config.ssh_key_passphrase.as_ref() != Some(cli_passphrase)
-    {
+    if let Some(cli_passphrase) = key_passphrase {
         device_config.ssh_key_passphrase = Some(cli_passphrase.clone());
-        changes_made = true;
+    }
+}
+
+/// Prompt to save CLI SSH parameters to device config if they differ from current config
+fn prompt_to_save_ssh_params(
+    app_config: &mut AppConfig,
+    hostname: &str,
+    username: &Option<String>,
+    keyfile: &Option<String>,
+    key_passphrase: &Option<String>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut changes_to_save = Vec::new();
+    let current_device = app_config.get_device(hostname);
+
+    // Check if CLI username differs from config
+    if let Some(cli_username) = username
+        && current_device.is_none_or(|d| d.ssh_username.as_ref() != Some(cli_username))
+    {
+        changes_to_save.push(format!("username: {}", cli_username));
+    }
+
+    // Check if CLI keyfile would be added
+    if let Some(cli_keyfile) = keyfile {
+        changes_to_save.push(format!("keyfile: {}", cli_keyfile));
+    }
+
+    // Check if CLI passphrase differs from config
+    if let Some(cli_passphrase) = key_passphrase
+        && current_device.is_none_or(|d| d.ssh_key_passphrase.as_ref() != Some(cli_passphrase))
+    {
         changes_to_save.push("SSH key passphrase".to_string());
     }
 
-    // Prompt to save changes if requested and changes were made
-    if prompt_save && changes_made && !changes_to_save.is_empty() {
+    // Prompt to save changes if any were detected
+    if !changes_to_save.is_empty() {
         let change_list = changes_to_save.join(", ");
         let prompt_text = format!(
             "Save SSH configuration changes to device '{}' config?\nChanges: {}",
-            device_config.hostname, change_list
+            hostname, change_list
         );
 
         if Confirm::new()
@@ -83,23 +98,26 @@ fn apply_ssh_params_with_prompts(
             .interact()
             .unwrap_or(false)
         {
-            // Find the device in app_config and update it
-            if let Some(device) = app_config.get_device_mut(&device_config.hostname) {
-                if username.is_some() {
-                    device.ssh_username = device_config.ssh_username.clone();
+            // Apply the changes to the device config
+            if let Some(device) = app_config.get_device_mut(hostname) {
+                if let Some(cli_username) = username {
+                    device.ssh_username = Some(cli_username.clone());
                 }
-                if keyfile.is_some() {
-                    device.ssh_identity_files = device_config.ssh_identity_files.clone();
+                if let Some(cli_keyfile) = keyfile {
+                    let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
+                    if !device.ssh_identity_files.contains(&cli_keyfile_path) {
+                        device.ssh_identity_files.insert(0, cli_keyfile_path);
+                    }
+                }
+                if let Some(cli_passphrase) = key_passphrase {
+                    device.ssh_key_passphrase = Some(cli_passphrase.clone());
                 }
             }
-
-            // Save the updated config
-            app_config.save_to_file(config_path)?;
-            info!("✅ SSH configuration saved to device config");
+            return Ok(true);
         }
     }
 
-    Ok(())
+    Ok(false)
 }
 
 /// Trailfinder - Network device discovery and configuration parsing tool
@@ -514,6 +532,7 @@ async fn identify_command(
         };
 
     info!("Identifying {} device(s)...", devices_to_identify.len());
+    let mut successfully_identified_devices = Vec::new();
 
     for hostname in devices_to_identify {
         info!("Processing device: {}", hostname);
@@ -545,17 +564,8 @@ async fn identify_command(
             }
         };
 
-        // Apply CLI-provided SSH parameters with optional prompts
-        let should_prompt = new_device_hostname.is_none(); // Don't prompt for new devices
-        apply_ssh_params_with_prompts(
-            &mut device_config,
-            &username,
-            &keyfile,
-            &key_passphrase,
-            should_prompt && !cached, // Don't prompt in cached mode
-            app_config,
-            config_path,
-        )?;
+        // Apply CLI-provided SSH parameters for runtime use (no prompting yet)
+        apply_ssh_params_no_prompts(&mut device_config, &username, &keyfile, &key_passphrase);
         if let Some(ref cli_ip_address) = ip_address {
             match cli_ip_address.parse::<IpAddr>() {
                 Ok(ip) => {
@@ -589,6 +599,9 @@ async fn identify_command(
                     Ok(()) => info!("Device {hostname} state saved successfully"),
                     Err(e) => warn!("Failed to save device {hostname} state: {}", e),
                 }
+
+                // Track successful identification
+                successfully_identified_devices.push(hostname.clone());
             }
             Err(e) => {
                 error!("Failed to identify/interrogate {}: {}", hostname, e);
@@ -633,6 +646,29 @@ async fn identify_command(
             }
             Err(e) => {
                 warn!("Failed to resolve neighbor relationships: {}", e);
+            }
+        }
+    }
+
+    // Prompt to save CLI SSH parameters to device configs (only for existing devices, only if not cached mode)
+    if !cached && !successfully_identified_devices.is_empty() {
+        for hostname in &successfully_identified_devices {
+            // Only prompt for existing devices, not newly added ones
+            if new_device_hostname.as_ref() != Some(hostname) {
+                match prompt_to_save_ssh_params(
+                    app_config,
+                    hostname,
+                    &username,
+                    &keyfile,
+                    &key_passphrase,
+                ) {
+                    Ok(saved) => {
+                        if saved {
+                            info!("✅ SSH configuration saved for device '{}'", hostname);
+                        }
+                    }
+                    Err(e) => warn!("Failed to save SSH parameters for '{}': {}", hostname, e),
+                }
             }
         }
     }
@@ -693,24 +729,15 @@ async fn update_command(
     }
 
     info!("Updating {} devices...", devices_to_update.len());
+    let mut successfully_updated_devices = Vec::new();
 
     let mut tasks = JoinSet::new();
 
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
         if let Some(mut device_config) = app_config.get_device(&hostname).cloned() {
-            // Apply CLI-provided SSH parameters with optional prompts
-            if let Err(e) = apply_ssh_params_with_prompts(
-                &mut device_config,
-                &username,
-                &keyfile,
-                &key_passphrase,
-                !cached, // Don't prompt in cached mode
-                app_config,
-                config_path,
-            ) {
-                warn!("Failed to apply SSH parameters for {}: {}", hostname, e);
-            }
+            // Apply CLI-provided SSH parameters for runtime use (no prompting yet)
+            apply_ssh_params_no_prompts(&mut device_config, &username, &keyfile, &key_passphrase);
 
             tasks.spawn(identify_and_interrogate_device(device_config, cached));
         }
@@ -740,7 +767,10 @@ async fn update_command(
 
                 // Save updated device state
                 match app_config.save_device_state(&hostname, &device_state) {
-                    Ok(()) => info!("Device state updated successfully for {hostname}"),
+                    Ok(()) => {
+                        info!("Device state updated successfully for {hostname}");
+                        successfully_updated_devices.push(hostname);
+                    }
                     Err(e) => warn!("Failed to save updated device state for {hostname}: {e}"),
                 }
             }
@@ -781,6 +811,26 @@ async fn update_command(
             }
             Err(e) => {
                 warn!("Failed to resolve neighbor relationships: {}", e);
+            }
+        }
+    }
+
+    // Prompt to save CLI SSH parameters to device configs (only if not cached mode)
+    if !cached && !successfully_updated_devices.is_empty() {
+        for hostname in &successfully_updated_devices {
+            match prompt_to_save_ssh_params(
+                app_config,
+                hostname,
+                &username,
+                &keyfile,
+                &key_passphrase,
+            ) {
+                Ok(saved) => {
+                    if saved {
+                        info!("✅ SSH configuration saved for device '{}'", hostname);
+                    }
+                }
+                Err(e) => warn!("Failed to save SSH parameters for '{}': {}", hostname, e),
             }
         }
     }
@@ -990,8 +1040,7 @@ async fn identify_and_interrogate_device(
 
     // Interrogate device using trait-based approach
     let device_state =
-        interrogate_device_by_brand(brand.clone(), &mut ssh_client, &device_config, device_type)
-            .await?;
+        interrogate_device_by_brand(&brand, &mut ssh_client, &device_config, device_type).await?;
 
     Ok((device_config.device_id, brand, device_type, device_state))
 }
