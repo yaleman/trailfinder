@@ -12,12 +12,6 @@ function initializeEventListeners() {
     // Refresh button
     document.getElementById('refresh-topology').addEventListener('click', loadTopology);
 
-    // Show networks toggle
-    document.getElementById('show-networks').addEventListener('change', (e) => {
-        if (topologyData) {
-            renderTopology(topologyData);
-        }
-    });
 
     // Device type filter checkboxes
     const deviceTypeCheckboxes = [
@@ -74,12 +68,10 @@ function shouldShowInternetNode() {
 let topologyControls = null;
 
 async function loadTopology() {
-    const showNetworks = document.getElementById('show-networks')?.checked || false;
     const visibleDeviceTypes = getVisibleDeviceTypes();
     const showInternet = shouldShowInternetNode();
 
     const result = await loadAndRenderTopology('topology-container', {
-        showNetworks,
         visibleDeviceTypes,
         showInternet,
         onNodeClick: showDeviceDetails
@@ -99,12 +91,10 @@ async function loadTopology() {
 
 function renderTopology(topology) {
     // Re-render with current settings
-    const showNetworks = document.getElementById('show-networks')?.checked || false;
     const visibleDeviceTypes = getVisibleDeviceTypes();
     const showInternet = shouldShowInternetNode();
 
     const result = renderNetworkTopology(topology, 'topology-container', {
-        showNetworks,
         visibleDeviceTypes,
         showInternet,
         onNodeClick: showDeviceDetails
