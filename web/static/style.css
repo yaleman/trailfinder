@@ -112,6 +112,7 @@ main {
     cursor: pointer;
     transition: all 0.3s ease;
     border-left: 4px solid #007acc;
+    text-overflow: ellipsis;
 }
 
 .device-card:hover {
@@ -122,6 +123,11 @@ main {
 .device-card h3 {
     color: #333;
     margin-bottom: 0.5rem;
+    /* font-size: 1.0rem; */
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    width: 100%;
 }
 
 .device-type {
@@ -141,6 +147,7 @@ main {
     color: #666;
     margin-bottom: 0.5rem;
 }
+
 ul.device-stats  {
 
     list-style: none;

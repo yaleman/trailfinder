@@ -21,11 +21,6 @@ This directory contains the JavaScript files for the TrailFinder web interface. 
 
 ### Page-Specific Files
 
-#### `app.js` - Main Multi-Tab Application
-- Tab management and navigation
-- Coordinates between devices, topology, and pathfinder views
-- Uses shared utilities from `common.js` and `topology-utils.js`
-- **Reduced from ~560 lines to ~242 lines** (57% reduction)
 
 #### `devices.js` - Device Management Interface
 - Device listing, filtering, and card rendering
@@ -131,9 +126,6 @@ For HTML pages, include scripts in this order:
 
 <!-- External libraries -->
 <script src="/static/third_party/d3.min.js"></script>
-
-<!-- Page-specific logic -->
-<script src="/static/app.js"></script>
 ```
 
 ## Total Impact

@@ -1,5 +1,6 @@
 //! Configuration-related things
 //!
+use serde_with::DisplayFromStr;
 use std::collections::HashMap;
 use std::{
     collections::{HashSet, hash_map::DefaultHasher},
@@ -13,6 +14,7 @@ use std::{
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use uuid::Uuid;
 
 use crate::{Device, DeviceType, Owner, TrailFinderError};
@@ -48,6 +50,7 @@ impl Display for DeviceBrand {
 }
 
 #[serde_with::skip_serializing_none]
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceConfig {
     #[serde(default = "Uuid::new_v4")]
@@ -59,6 +62,7 @@ pub struct DeviceConfig {
     pub ip_address: Option<IpAddr>,
     pub brand: Option<DeviceBrand>,
     pub device_type: Option<DeviceType>,
+    #[serde_as(as = "DisplayFromStr")]
     pub owner: Owner,
     pub ssh_username: Option<String>,
     #[serde(default = "default_ssh_port")]

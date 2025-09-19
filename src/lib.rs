@@ -14,11 +14,13 @@ use std::{
     collections::HashMap,
     fmt::Display,
     net::{AddrParseError, IpAddr},
+    str::FromStr,
 };
 
 use cidr::errors::NetworkParseError;
 use mac_address::MacAddress;
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -80,6 +82,14 @@ impl From<String> for Owner {
         } else {
             Owner::Named(name)
         }
+    }
+}
+
+impl FromStr for Owner {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(s.to_string().into())
     }
 }
 
@@ -167,6 +177,7 @@ impl IpsecPeer {
     }
 }
 
+#[serde_as]
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Device {
     pub device_id: uuid::Uuid,
@@ -175,6 +186,7 @@ pub struct Device {
     /// Device identity as reported by the device itself (e.g., from CDP, LLDP, or system identity)
     /// This may differ from hostname and is used for neighbor discovery
     pub system_identity: Option<String>,
+    #[serde_as(as = "DisplayFromStr")]
     pub owner: Owner,
     pub device_type: DeviceType,
     pub routes: Vec<Route>,

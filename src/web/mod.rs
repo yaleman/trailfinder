@@ -19,7 +19,7 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
-    Device, DeviceType, PeerConnection, TrailFinderError, config::AppConfig,
+    Device, DeviceType, Owner, PeerConnection, TrailFinderError, config::AppConfig,
     web::on_response::DefaultOnResponse,
 };
 use uuid::Uuid;
@@ -98,12 +98,13 @@ pub struct AppState {
 pub struct DeviceSummary {
     pub device_id: String,
     pub hostname: String,
-    pub name: Option<String>,
+    pub ip_address: Option<String>,
     pub device_type: Option<DeviceType>,
     pub brand: Option<String>,
     pub interface_count: usize,
     pub route_count: usize,
     pub last_seen: Option<DateTime<Utc>>,
+    pub owner: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -274,10 +275,16 @@ pub async fn list_devices(
             }
         };
 
+        let owner = match &device_config.owner {
+            Owner::Unknown => None,
+            Owner::Named(name) => Some(name.clone()),
+        };
+
         devices.push(DeviceSummary {
             device_id,
             hostname: device_config.hostname.clone(),
-            name: device_config.ip_address.map(|_| "Unknown".to_string()), // TODO: get actual name from device
+            ip_address: device_config.ip_address.map(|ip| ip.to_string()),
+            owner,
             device_type: device_config.device_type,
             brand: device_config.brand.as_ref().map(|b| b.to_string()),
             interface_count,
@@ -317,7 +324,7 @@ pub async fn get_device_details(
             && device_state.device.device_id == device_id
         {
             tracing::Span::current().record("hostname", &device_state.device.hostname);
-            debug!(hostname = %device_state.device.hostname, "Found device");
+            info!(hostname = %device_state.device.hostname, owner=&device_state.device.owner.to_string(), "Found device");
             return Ok(Json(device_state.device));
         }
     }

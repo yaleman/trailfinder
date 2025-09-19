@@ -256,9 +256,11 @@ function createDeviceDetailsDiv(device) {
     deviceDetailDiv.appendChild(deviceTypeP);
 
     // Owner
-    const ownerText = typeof device.owner === 'object' ? device.owner.Named || 'Unknown' : device.owner;
-    const ownerP = createInfoParagraph('Owner', ownerText);
-    deviceDetailDiv.appendChild(ownerP);
+    if (device.owner) {
+        const ownerP = createInfoParagraph('Owner', device.owner);
+        deviceDetailDiv.appendChild(ownerP);
+
+    }
 
     // Interfaces section
     const interfacesSection = createInterfacesTable(device.interfaces);
