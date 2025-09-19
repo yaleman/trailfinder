@@ -198,8 +198,8 @@ impl SshClient {
     pub async fn connect_with_ssh_config(
         hostname: &str,
         ip_address: SocketAddr,
+        username: Option<&str>,
         timeout: Duration,
-        fallback_username: Option<&str>,
     ) -> Result<Self, SshError> {
         // Load SSH config using our custom parser
         let ssh_config = Self::load_ssh_config()?;
@@ -211,17 +211,12 @@ impl SshClient {
             "SSH config lookup result"
         );
 
-        // Get system user as final fallback
-        let system_user = std::env::var("USER").ok();
-        let system_user_ref = system_user.as_deref();
-
         let (username, identities_only, identity_files) = if let Some(config) = host_config {
             // Get connection details from SSH config, with fallback to provided username
             let username = config
                 .user
                 .as_deref()
-                .or(fallback_username)
-                .or(system_user_ref)
+                .or(username)
                 .ok_or_else(|| {
                     SshError::Authentication(
                         "No username found in SSH config, device config, or system environment"
@@ -236,8 +231,7 @@ impl SshClient {
             (username, identities_only, identity_files)
         } else {
             // No SSH config found for host, use fallback username and defaults
-            let username = fallback_username
-                .or(system_user_ref)
+            let ssh_username = username
                 .ok_or_else(|| {
                     SshError::Authentication(
                         "No SSH config found and no fallback username or system user available"
@@ -246,7 +240,7 @@ impl SshClient {
                 })?
                 .to_string();
 
-            (username, false, Vec::new())
+            (ssh_username, false, Vec::new())
         };
 
         let use_ssh_agent = !identities_only;
@@ -255,15 +249,13 @@ impl SshClient {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
 
-        let current_user = std::env::var("USER").ok();
         debug!(
             hostname = %hostname,
             username = %username,
             use_ssh_agent = %use_ssh_agent,
             identity_files_count = identity_files.len(),
             identity_files = ?key_paths,
-            fallback_username = ?fallback_username,
-            system_user = ?current_user,
+            system_user = ?username,
             "SSH config loaded for host"
         );
 

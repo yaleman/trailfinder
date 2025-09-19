@@ -212,8 +212,7 @@ pub async fn identify_device_via_ssh(
     let effective_username = config
         .username
         .clone()
-        .or_else(|| host_config.as_ref().and_then(|hc| hc.user.clone()))
-        .or_else(|| std::env::var("USER").ok());
+        .or_else(|| host_config.as_ref().and_then(|hc| hc.user.clone()));
 
     // Get all identity files from SSH config (with variable substitution)
     let ssh_identity_files = host_config
@@ -364,9 +363,8 @@ pub fn discovered_device_to_config(
         .or_else(|| ssh_config.get_host_config("*"));
 
     // Merge provided config with SSH config, preferring provided values
-    let effective_username = username
-        .or_else(|| host_config.as_ref().and_then(|hc| hc.user.clone()))
-        .or_else(|| std::env::var("USER").ok());
+    let effective_username =
+        username.or_else(|| host_config.as_ref().and_then(|hc| hc.user.clone()));
 
     // Get all identity files from SSH config (with variable substitution)
     let ssh_identity_files = host_config

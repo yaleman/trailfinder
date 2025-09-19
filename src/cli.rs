@@ -20,9 +20,87 @@ use crate::{
     ssh::{DeviceIdentifier, SshClient},
     web::web_server_command,
 };
+use dialoguer::Confirm;
 use uuid::Uuid;
 
 pub const DEFAULT_CONFIG_FILE: &str = "devices.json";
+
+/// Apply CLI SSH parameters to device config and optionally prompt to save changes
+fn apply_ssh_params_with_prompts(
+    device_config: &mut DeviceConfig,
+    username: &Option<String>,
+    keyfile: &Option<String>,
+    key_passphrase: &Option<String>,
+    prompt_save: bool,
+    app_config: &mut AppConfig,
+    config_path: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut changes_made = false;
+    let mut changes_to_save = Vec::new();
+
+    // Apply CLI username
+    if let Some(cli_username) = username
+        && device_config.ssh_username.as_ref() != Some(cli_username)
+    {
+        device_config.ssh_username = Some(cli_username.clone());
+        changes_made = true;
+        changes_to_save.push(format!("username: {}", cli_username));
+    }
+
+    // Apply CLI keyfile
+    if let Some(cli_keyfile) = keyfile {
+        let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
+        device_config
+            .ssh_identity_files
+            .insert(0, cli_keyfile_path.clone());
+        device_config
+            .all_ssh_identity_files
+            .insert(0, cli_keyfile_path);
+        changes_made = true;
+        changes_to_save.push(format!("keyfile: {}", cli_keyfile));
+    }
+
+    // Apply CLI passphrase
+    if let Some(cli_passphrase) = key_passphrase
+        && device_config.ssh_key_passphrase.as_ref() != Some(cli_passphrase)
+    {
+        device_config.ssh_key_passphrase = Some(cli_passphrase.clone());
+        changes_made = true;
+        changes_to_save.push("SSH key passphrase".to_string());
+    }
+
+    // Prompt to save changes if requested and changes were made
+    if prompt_save && changes_made && !changes_to_save.is_empty() {
+        let change_list = changes_to_save.join(", ");
+        let prompt_text = format!(
+            "Save SSH configuration changes to device '{}' config?\nChanges: {}",
+            device_config.hostname, change_list
+        );
+
+        if Confirm::new()
+            .with_prompt(prompt_text)
+            .default(false)
+            .interact()
+            .unwrap_or(false)
+        {
+            // Find the device in app_config and update it
+            if let Some(device) = app_config.get_device_mut(&device_config.hostname) {
+                if username.is_some() {
+                    device.ssh_username = device_config.ssh_username.clone();
+                }
+                if keyfile.is_some() {
+                    device.ssh_identity_files = device_config.ssh_identity_files.clone();
+                }
+            }
+
+            // Save the updated config
+            app_config.save_to_file(config_path)?;
+            info!("✅ SSH configuration saved to device config");
+        }
+    }
+
+    Ok(())
+}
 
 /// Trailfinder - Network device discovery and configuration parsing tool
 #[derive(Parser)]
@@ -57,11 +135,14 @@ enum Commands {
         #[arg(short, long)]
         ip_address: Option<String>,
         /// SSH username to use for connection
-        #[arg(short, long)]
+        #[arg(short, long, env = "USER")]
         username: Option<String>,
         /// SSH key file path to use for authentication
         #[arg(short, long)]
         keyfile: Option<String>,
+        /// SSH key passphrase to use for authentication
+        #[arg(long, env = "TRAILFINDER_KEY_PASSPHRASE")]
+        key_passphrase: Option<String>,
         /// SSH port to use for connection
         #[arg(short, long, default_value = "22")]
         port: u16,
@@ -71,6 +152,9 @@ enum Commands {
         /// Optional notes about the device
         #[arg(short, long)]
         notes: Option<String>,
+        /// Automatically identify device after adding
+        #[arg(long)]
+        identify: bool,
     },
     /// Start web server for network topology visualization
     Web {
@@ -86,11 +170,14 @@ enum Commands {
         /// Specific hostname to identify and add to config if not present
         hostname: Option<String>,
         /// SSH username to use for connection
-        #[arg(short, long)]
+        #[arg(short, long, env = "USER")]
         username: Option<String>,
         /// SSH key file path to use for authentication
         #[arg(short, long)]
         keyfile: Option<String>,
+        /// SSH key passphrase to use for authentication
+        #[arg(long, env = "TRAILFINDER_KEY_PASSPHRASE")]
+        key_passphrase: Option<String>,
         /// IP address to use for connection
         #[arg(short, long)]
         ip_address: Option<String>,
@@ -103,11 +190,14 @@ enum Commands {
         /// Specific device hostnames to update (updates all if none specified)
         devices: Vec<String>,
         /// SSH username to use for connection
-        #[arg(short, long)]
+        #[arg(short, long, env = "USER")]
         username: Option<String>,
         /// SSH key file path to use for authentication
         #[arg(short, long)]
         keyfile: Option<String>,
+        /// SSH key passphrase to use for authentication
+        #[arg(long, env = "TRAILFINDER_KEY_PASSPHRASE")]
+        key_passphrase: Option<String>,
         /// Use cached command responses instead of executing commands over SSH
         #[arg(long)]
         cached: bool,
@@ -159,11 +249,14 @@ enum Commands {
         #[arg(short, long, default_value = "22")]
         port: u16,
         /// SSH username for identification attempts (defaults to ~/.ssh/config or $USER)
-        #[arg(short, long)]
+        #[arg(short, long, env = "USER")]
         username: Option<String>,
         /// SSH key file for authentication (defaults to ~/.ssh/config identity files)
-        #[arg(short, long)]
+        #[arg(short, long, env = "TRAILFINDER_KEYFILE")]
         keyfile: Option<String>,
+        /// SSH key passphrase to use for authentication
+        #[arg(long, env = "TRAILFINDER_KEY_PASSPHRASE")]
+        key_passphrase: Option<String>,
         /// Connection timeout in seconds
         #[arg(short, long, default_value = "5")]
         timeout: u64,
@@ -245,20 +338,24 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             ip_address,
             username,
             keyfile,
+            key_passphrase,
             port,
             owner,
             notes,
+            identify,
         } => {
             let params = AddDeviceParams {
                 hostname: &hostname,
                 ip_address: &ip_address,
                 username: &username,
                 keyfile: &keyfile,
+                key_passphrase: &key_passphrase,
                 port,
                 owner: &owner,
                 notes: &notes,
+                identify,
             };
-            add_command(&mut app_config, config_path, &params)?;
+            add_command(&mut app_config, config_path, &params).await?;
         }
         Commands::Web { port, address } => {
             tokio::select! {
@@ -276,6 +373,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             hostname,
             username,
             keyfile,
+            key_passphrase,
             ip_address,
             cached,
         } => {
@@ -285,13 +383,29 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
                 hostname,
                 username,
                 keyfile,
+                key_passphrase,
                 ip_address,
                 cached,
             )
             .await?;
         }
-        Commands::Update { devices, username, keyfile, cached } => {
-            update_command(&mut app_config, config_path, devices, username, keyfile, cached).await?;
+        Commands::Update {
+            devices,
+            username,
+            keyfile,
+            key_passphrase,
+            cached,
+        } => {
+            update_command(
+                &mut app_config,
+                config_path,
+                devices,
+                username,
+                keyfile,
+                key_passphrase,
+                cached,
+            )
+            .await?;
         }
         Commands::Pathfind {
             source_ip,
@@ -336,6 +450,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             port,
             username,
             keyfile,
+            key_passphrase,
             timeout,
             add,
             cached,
@@ -345,6 +460,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
                 port,
                 username,
                 keyfile,
+                key_passphrase,
                 timeout,
                 add_devices: add,
                 cached,
@@ -362,6 +478,7 @@ async fn identify_command(
     target_hostname: Option<String>,
     username: Option<String>,
     keyfile: Option<String>,
+    key_passphrase: Option<String>,
     ip_address: Option<String>,
     cached: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -428,16 +545,17 @@ async fn identify_command(
             }
         };
 
-        // Apply CLI-provided SSH parameters (override config values)
-        if let Some(ref cli_username) = username {
-            device_config.ssh_username = Some(cli_username.clone());
-        }
-        if let Some(ref cli_keyfile) = keyfile {
-            // Add CLI keyfile to the beginning of the list so it's tried first
-            let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
-            device_config.ssh_identity_files.insert(0, cli_keyfile_path.clone());
-            device_config.all_ssh_identity_files.insert(0, cli_keyfile_path);
-        }
+        // Apply CLI-provided SSH parameters with optional prompts
+        let should_prompt = new_device_hostname.is_none(); // Don't prompt for new devices
+        apply_ssh_params_with_prompts(
+            &mut device_config,
+            &username,
+            &keyfile,
+            &key_passphrase,
+            should_prompt && !cached, // Don't prompt in cached mode
+            app_config,
+            config_path,
+        )?;
         if let Some(ref cli_ip_address) = ip_address {
             match cli_ip_address.parse::<IpAddr>() {
                 Ok(ip) => {
@@ -532,6 +650,7 @@ async fn update_command(
     specific_devices: Vec<String>,
     username: Option<String>,
     keyfile: Option<String>,
+    key_passphrase: Option<String>,
     cached: bool,
 ) -> Result<(), TrailFinderError> {
     // Determine which devices to update
@@ -580,15 +699,17 @@ async fn update_command(
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
         if let Some(mut device_config) = app_config.get_device(&hostname).cloned() {
-            // Apply CLI-provided SSH parameters (override config values)
-            if let Some(ref cli_username) = username {
-                device_config.ssh_username = Some(cli_username.clone());
-            }
-            if let Some(ref cli_keyfile) = keyfile {
-                // Add CLI keyfile to the beginning of the list so it's tried first
-                let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
-                device_config.ssh_identity_files.insert(0, cli_keyfile_path.clone());
-                device_config.all_ssh_identity_files.insert(0, cli_keyfile_path);
+            // Apply CLI-provided SSH parameters with optional prompts
+            if let Err(e) = apply_ssh_params_with_prompts(
+                &mut device_config,
+                &username,
+                &keyfile,
+                &key_passphrase,
+                !cached, // Don't prompt in cached mode
+                app_config,
+                config_path,
+            ) {
+                warn!("Failed to apply SSH parameters for {}: {}", hostname, e);
             }
 
             tasks.spawn(identify_and_interrogate_device(device_config, cached));
@@ -677,15 +798,17 @@ struct AddDeviceParams<'a> {
     ip_address: &'a Option<String>,
     username: &'a Option<String>,
     keyfile: &'a Option<String>,
+    key_passphrase: &'a Option<String>,
     port: u16,
     owner: &'a Option<String>,
     notes: &'a Option<String>,
+    identify: bool,
 }
 
-fn add_command(
+async fn add_command(
     app_config: &mut AppConfig,
     config_path: &PathBuf,
-    params: &AddDeviceParams,
+    params: &AddDeviceParams<'_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check if device already exists
     if app_config.get_device(params.hostname).is_some() {
@@ -732,7 +855,7 @@ fn add_command(
         } else {
             Vec::new()
         },
-        ssh_key_passphrase: None,
+        ssh_key_passphrase: params.key_passphrase.clone(),
         last_interrogated: None,
         notes: params.notes.clone(),
         all_ssh_identity_files: Vec::new(),
@@ -742,7 +865,7 @@ fn add_command(
     info!("Adding device '{}' to configuration", params.hostname);
 
     // Add device to configuration
-    app_config.add_device(device_config);
+    app_config.add_device(device_config.clone());
 
     // Re-process SSH configurations to include the new device
     app_config.process_device_ssh_configs()?;
@@ -768,10 +891,48 @@ fn add_command(
         info!("   Notes: {}", device_notes);
     }
 
-    info!(
-        "💡 Use 'identify {}' to automatically detect device type and brand",
-        params.hostname
-    );
+    if params.identify {
+        info!("🔍 Automatically identifying device...");
+        match identify_and_interrogate_device(device_config.clone(), false).await {
+            Ok((device_id, brand, device_type, device_state)) => {
+                info!("{device_id} Identified as {:?} {:?}", brand, device_type);
+                app_config.update_device_identification(params.hostname, brand, device_type)?;
+
+                // Save device state
+                match app_config.save_device_state(params.hostname, &device_state) {
+                    Ok(()) => info!(
+                        "Device {hostname} state saved successfully",
+                        hostname = params.hostname
+                    ),
+                    Err(e) => warn!(
+                        "Failed to save device {hostname} state: {}",
+                        e,
+                        hostname = params.hostname
+                    ),
+                }
+
+                // Save updated configuration
+                app_config.save_to_file(config_path)?;
+                info!(
+                    "✅ Device '{}' added and identified successfully",
+                    params.hostname
+                );
+            }
+            Err(e) => {
+                warn!("Failed to identify device '{}': {}", params.hostname, e);
+                info!("Device added to configuration but identification failed");
+                info!(
+                    "💡 Use 'identify {}' to retry device identification",
+                    params.hostname
+                );
+            }
+        }
+    } else {
+        info!(
+            "💡 Use 'identify {}' to automatically detect device type and brand",
+            params.hostname
+        );
+    }
 
     Ok(())
 }
@@ -1065,6 +1226,7 @@ struct ScanOptions {
     port: u16,
     username: Option<String>,
     keyfile: Option<String>,
+    key_passphrase: Option<String>,
     timeout: u64,
     add_devices: bool,
     cached: bool,
@@ -1080,6 +1242,9 @@ async fn scan_command(
     }
 
     info!("Starting network scan of {} targets", options.targets.len());
+
+    // TODO: Add key_passphrase support to ScanConfig
+    let _key_passphrase = &options.key_passphrase; // Suppress unused field warning
 
     let scan_config = ScanConfig {
         port: options.port,
@@ -1245,12 +1410,14 @@ mod tests {
                 hostname,
                 username,
                 keyfile,
+                key_passphrase,
                 ip_address,
                 cached,
             } => {
                 assert_eq!(hostname, Some("router1".to_string()));
                 assert_eq!(username, Some("admin".to_string()));
                 assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(key_passphrase, None);
                 assert_eq!(ip_address, Some("192.168.1.1".to_string()));
                 assert!(!cached); // Default should be false
             }
@@ -1261,35 +1428,83 @@ mod tests {
     #[test]
     fn test_cli_parsing_update_command() {
         // Test update command with specific devices
+        // Temporarily remove USER env var to test default behavior
+        let original_user = std::env::var("USER").ok();
+        unsafe {
+            std::env::remove_var("USER");
+        }
+
         let args = vec!["trailfinder", "update", "router1", "switch1"];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Update { devices, username, keyfile, cached } => {
+            Commands::Update {
+                devices,
+                username,
+                keyfile,
+                key_passphrase,
+                cached,
+            } => {
                 assert_eq!(devices, vec!["router1", "switch1"]);
                 assert_eq!(username, None);
                 assert_eq!(keyfile, None);
+                assert_eq!(key_passphrase, None);
                 assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Update command"),
         }
 
+        // Restore original USER env var if it existed
+        if let Some(user) = original_user {
+            unsafe {
+                std::env::set_var("USER", user);
+            }
+        }
+
         // Test update command with SSH parameters
-        let args = vec!["trailfinder", "update", "router1", "--username", "admin", "--keyfile", "/path/to/key"];
+        // Temporarily remove USER env var to test CLI args take precedence
+        let original_user2 = std::env::var("USER").ok();
+        unsafe {
+            std::env::remove_var("USER");
+        }
+
+        let args = vec![
+            "trailfinder",
+            "update",
+            "router1",
+            "--username",
+            "admin",
+            "--keyfile",
+            "/path/to/key",
+        ];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Update { devices, username, keyfile, cached } => {
+            Commands::Update {
+                devices,
+                username,
+                keyfile,
+                key_passphrase,
+                cached,
+            } => {
                 assert_eq!(devices, vec!["router1"]);
                 assert_eq!(username, Some("admin".to_string()));
                 assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(key_passphrase, None);
                 assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Update command"),
+        }
+
+        // Restore original USER env var if it existed
+        if let Some(user) = original_user2 {
+            unsafe {
+                std::env::set_var("USER", user);
+            }
         }
     }
 
@@ -1666,9 +1881,11 @@ mod tests {
             ip_address: Some("192.168.1.1".to_string()),
             username: Some("admin".to_string()),
             keyfile: Some("/path/to/key".to_string()),
+            key_passphrase: None,
             port: 2222,
             owner: Some("Lab Network".to_string()),
             notes: Some("Test device".to_string()),
+            identify: false,
         };
         match add_cmd {
             Commands::Add { hostname, port, .. } => {
@@ -1694,6 +1911,7 @@ mod tests {
             hostname: Some("router1".to_string()),
             username: None,
             keyfile: None,
+            key_passphrase: None,
             ip_address: None,
             cached: false,
         };
@@ -1724,6 +1942,7 @@ mod tests {
             port: 22,
             username: Some("admin".to_string()),
             keyfile: None,
+            key_passphrase: None,
             timeout: 5,
             add: false,
             cached: false,
@@ -1787,6 +2006,12 @@ mod tests {
     #[test]
     fn test_cli_parsing_add_command() {
         // Test basic add command
+        // Temporarily remove USER env var to test default behavior
+        let original_user = std::env::var("USER").ok();
+        unsafe {
+            std::env::remove_var("USER");
+        }
+
         let args = vec!["trailfinder", "add", "test-device.example.com"];
         let cli = Cli::try_parse_from(args);
         assert!(cli.is_ok());
@@ -1798,22 +2023,39 @@ mod tests {
                 ip_address,
                 username,
                 keyfile,
+                key_passphrase,
                 port,
                 owner,
                 notes,
+                identify,
             } => {
                 assert_eq!(hostname, "test-device.example.com");
                 assert_eq!(ip_address, None);
                 assert_eq!(username, None);
                 assert_eq!(keyfile, None);
+                assert_eq!(key_passphrase, None);
                 assert_eq!(port, 22); // Default
                 assert_eq!(owner, None);
                 assert_eq!(notes, None);
+                assert!(!identify); // Default
             }
             _ => panic!("Expected Add command"),
         }
 
+        // Restore original USER env var if it existed
+        if let Some(user) = original_user {
+            unsafe {
+                std::env::set_var("USER", user);
+            }
+        }
+
         // Test add command with all options
+        // Temporarily remove USER env var to test CLI args take precedence
+        let original_user2 = std::env::var("USER").ok();
+        unsafe {
+            std::env::remove_var("USER");
+        }
+
         let args = vec![
             "trailfinder",
             "add",
@@ -1841,19 +2083,30 @@ mod tests {
                 ip_address,
                 username,
                 keyfile,
+                key_passphrase,
                 port,
                 owner,
                 notes,
+                identify,
             } => {
                 assert_eq!(hostname, "router1.example.com");
                 assert_eq!(ip_address, Some("192.168.1.1".to_string()));
                 assert_eq!(username, Some("admin".to_string()));
                 assert_eq!(keyfile, Some("/path/to/key".to_string()));
+                assert_eq!(key_passphrase, None);
                 assert_eq!(port, 2222);
                 assert_eq!(owner, Some("Lab Network".to_string()));
                 assert_eq!(notes, Some("Primary router".to_string()));
+                assert!(!identify);
             }
             _ => panic!("Expected Add command"),
+        }
+
+        // Restore original USER env var if it existed
+        if let Some(user) = original_user2 {
+            unsafe {
+                std::env::set_var("USER", user);
+            }
         }
     }
 
@@ -1906,6 +2159,7 @@ mod tests {
                 port,
                 username,
                 keyfile,
+                key_passphrase: _,
                 timeout,
                 add,
                 cached,
@@ -1922,8 +2176,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_add_command_functionality() {
+    #[tokio::test]
+    async fn test_add_command_functionality() {
         use crate::config::AppConfig;
         use tempfile::NamedTempFile;
 
@@ -1940,12 +2194,14 @@ mod tests {
             ip_address: &None,
             username: &None,
             keyfile: &None,
+            key_passphrase: &None,
             port: 22,
             owner: &None,
             notes: &None,
+            identify: false,
         };
         let result = add_command(&mut app_config, &config_path, &params);
-        assert!(result.is_ok());
+        assert!(result.await.is_ok());
         assert_eq!(app_config.devices.len(), 1);
         assert_eq!(app_config.devices[0].hostname, "test-device.example.com");
         assert_eq!(app_config.devices[0].ssh_port.get(), 22);
@@ -1957,17 +2213,20 @@ mod tests {
         let key = Some("/path/to/key".to_string());
         let owner_val = Some("Lab Network".to_string());
         let notes_val = Some("Primary router".to_string());
+        let key_passphrase = None;
         let params = AddDeviceParams {
             hostname: "router1.example.com",
             ip_address: &ip,
             username: &user,
             keyfile: &key,
+            key_passphrase: &key_passphrase,
             port: 2222,
             owner: &owner_val,
             notes: &notes_val,
+            identify: false,
         };
         let result = add_command(&mut app_config, &config_path, &params);
-        assert!(result.is_ok());
+        assert!(result.await.is_ok());
         assert_eq!(app_config.devices.len(), 2);
 
         let new_device = &app_config.devices[1];
@@ -1983,17 +2242,19 @@ mod tests {
             ip_address: &None,
             username: &None,
             keyfile: &None,
+            key_passphrase: &None,
             port: 22,
             owner: &None,
             notes: &None,
+            identify: false,
         };
         let result = add_command(&mut app_config, &config_path, &params);
-        assert!(result.is_err());
+        assert!(result.await.is_err());
         assert_eq!(app_config.devices.len(), 2); // No change
     }
 
-    #[test]
-    fn test_add_command_invalid_ip() {
+    #[tokio::test]
+    async fn test_add_command_invalid_ip() {
         use crate::config::AppConfig;
         use tempfile::NamedTempFile;
 
@@ -2008,17 +2269,19 @@ mod tests {
             ip_address: &invalid_ip,
             username: &None,
             keyfile: &None,
+            key_passphrase: &None,
             port: 22,
             owner: &None,
             notes: &None,
+            identify: false,
         };
         let result = add_command(&mut app_config, &config_path, &params);
-        assert!(result.is_err());
+        assert!(result.await.is_err());
         assert_eq!(app_config.devices.len(), 0); // No device added
     }
 
-    #[test]
-    fn test_add_command_invalid_port() {
+    #[tokio::test]
+    async fn test_add_command_invalid_port() {
         use crate::config::AppConfig;
         use tempfile::NamedTempFile;
 
@@ -2032,12 +2295,14 @@ mod tests {
             ip_address: &None,
             username: &None,
             keyfile: &None,
+            key_passphrase: &None,
             port: 0,
             owner: &None,
             notes: &None,
+            identify: false,
         };
         let result = add_command(&mut app_config, &config_path, &params);
-        assert!(result.is_err());
+        assert!(result.await.is_err());
         assert_eq!(app_config.devices.len(), 0); // No device added
     }
 

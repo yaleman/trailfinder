@@ -108,7 +108,7 @@ impl DeviceConfig {
             .as_ref()
             .and_then(|config| config.user.clone())
             .or_else(|| self.ssh_username.clone())
-            .or_else(|| std::env::var("USER").ok())
+            .or_else(|| std::env::var("USER").ok()) // TODO: this should take the cli username
     }
 
     /// Get all SSH identity files for this device (explicit + SSH config)
