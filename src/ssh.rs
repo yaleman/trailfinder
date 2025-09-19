@@ -500,7 +500,7 @@ impl SshClient {
                             Ok(key) => {
                                 if key.is_encrypted() {
                                     warn!(
-                                        "This OpenSSH key is encrypted but no passphrase was provided"
+                                        "The OpenSSH key {path} is encrypted but no passphrase was provided"
                                     );
                                     // TODO: prompt for passphrase here
                                 }

@@ -102,6 +102,12 @@ enum Commands {
     Update {
         /// Specific device hostnames to update (updates all if none specified)
         devices: Vec<String>,
+        /// SSH username to use for connection
+        #[arg(short, long)]
+        username: Option<String>,
+        /// SSH key file path to use for authentication
+        #[arg(short, long)]
+        keyfile: Option<String>,
         /// Use cached command responses instead of executing commands over SSH
         #[arg(long)]
         cached: bool,
@@ -284,8 +290,8 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         }
-        Commands::Update { devices, cached } => {
-            update_command(&mut app_config, config_path, devices, cached).await?;
+        Commands::Update { devices, username, keyfile, cached } => {
+            update_command(&mut app_config, config_path, devices, username, keyfile, cached).await?;
         }
         Commands::Pathfind {
             source_ip,
@@ -427,7 +433,10 @@ async fn identify_command(
             device_config.ssh_username = Some(cli_username.clone());
         }
         if let Some(ref cli_keyfile) = keyfile {
-            device_config.ssh_identity_files = vec![cli_keyfile.into()];
+            // Add CLI keyfile to the beginning of the list so it's tried first
+            let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
+            device_config.ssh_identity_files.insert(0, cli_keyfile_path.clone());
+            device_config.all_ssh_identity_files.insert(0, cli_keyfile_path);
         }
         if let Some(ref cli_ip_address) = ip_address {
             match cli_ip_address.parse::<IpAddr>() {
@@ -521,6 +530,8 @@ async fn update_command(
     app_config: &mut AppConfig,
     config_path: &PathBuf,
     specific_devices: Vec<String>,
+    username: Option<String>,
+    keyfile: Option<String>,
     cached: bool,
 ) -> Result<(), TrailFinderError> {
     // Determine which devices to update
@@ -568,7 +579,18 @@ async fn update_command(
 
     for hostname in devices_to_update {
         info!("Updating device: {}", hostname);
-        if let Some(device_config) = app_config.get_device(&hostname).cloned() {
+        if let Some(mut device_config) = app_config.get_device(&hostname).cloned() {
+            // Apply CLI-provided SSH parameters (override config values)
+            if let Some(ref cli_username) = username {
+                device_config.ssh_username = Some(cli_username.clone());
+            }
+            if let Some(ref cli_keyfile) = keyfile {
+                // Add CLI keyfile to the beginning of the list so it's tried first
+                let cli_keyfile_path: std::path::PathBuf = cli_keyfile.into();
+                device_config.ssh_identity_files.insert(0, cli_keyfile_path.clone());
+                device_config.all_ssh_identity_files.insert(0, cli_keyfile_path);
+            }
+
             tasks.spawn(identify_and_interrogate_device(device_config, cached));
         }
     }
@@ -1245,8 +1267,26 @@ mod tests {
 
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Update { devices, cached } => {
+            Commands::Update { devices, username, keyfile, cached } => {
                 assert_eq!(devices, vec!["router1", "switch1"]);
+                assert_eq!(username, None);
+                assert_eq!(keyfile, None);
+                assert!(!cached); // Default should be false
+            }
+            _ => panic!("Expected Update command"),
+        }
+
+        // Test update command with SSH parameters
+        let args = vec!["trailfinder", "update", "router1", "--username", "admin", "--keyfile", "/path/to/key"];
+        let cli = Cli::try_parse_from(args);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Update { devices, username, keyfile, cached } => {
+                assert_eq!(devices, vec!["router1"]);
+                assert_eq!(username, Some("admin".to_string()));
+                assert_eq!(keyfile, Some("/path/to/key".to_string()));
                 assert!(!cached); // Default should be false
             }
             _ => panic!("Expected Update command"),
