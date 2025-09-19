@@ -417,12 +417,12 @@ function createRoutesTable(routes) {
 
         // Gateway
         const gatewayCell = document.createElement('td');
-        gatewayCell.textContent = route.gateway || 'N/A';
+        gatewayCell.textContent = route.gateway || '';
         row.appendChild(gatewayCell);
 
         // Distance
         const distanceCell = document.createElement('td');
-        distanceCell.textContent = route.distance || 'N/A';
+        distanceCell.textContent = route.distance || '';
         row.appendChild(distanceCell);
 
         tbody.appendChild(row);

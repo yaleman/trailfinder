@@ -273,7 +273,7 @@ ul.device-stats  {
     padding: 0;
     border-radius: 8px;
     width: 80%;
-    max-width: 800px;
+    max-width: 90%;
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     position: relative;
 }
@@ -295,7 +295,6 @@ ul.device-stats  {
 
 #device-detail-content {
     padding: 2rem;
-    max-height: 70vh;
     overflow-y: auto;
 }
 
