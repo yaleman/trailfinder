@@ -59,12 +59,33 @@ function renderNetworkTopology(topology, containerId, options = {}) {
     console.debug('Devices:', topology.devices?.length || 0);
     console.debug('Connections:', topology.connections?.length || 0);
 
-    // Map connections to use source/target format expected by D3
-    const links = (topology.connections || []).map(conn => ({
-        ...conn,
-        source: conn.from,
-        target: conn.to
-    }));
+    // Filter devices based on visible device types and internet node setting
+    const visibleDeviceTypes = options.visibleDeviceTypes || ['Router', 'Switch', 'Firewall', 'AccessPoint', 'Unknown'];
+    const showInternet = options.showInternet !== undefined ? options.showInternet : true;
+
+    let filteredDevices = (topology.devices || []).filter(device => {
+        // Handle the 'internet' node based on showInternet setting
+        if (device.device_id === 'internet') {
+            return showInternet;
+        }
+        // Filter other devices by their type
+        return visibleDeviceTypes.includes(device.device_type);
+    });
+
+    // Create a set of visible device IDs for efficient lookup
+    const visibleDeviceIds = new Set(filteredDevices.map(d => d.device_id));
+
+    // Map connections to use source/target format expected by D3 and filter by visible devices
+    const links = (topology.connections || [])
+        .filter(conn => visibleDeviceIds.has(conn.from) && visibleDeviceIds.has(conn.to))
+        .map(conn => ({
+            ...conn,
+            source: conn.from,
+            target: conn.to
+        }));
+
+    console.debug('Filtered Devices:', filteredDevices.length);
+    console.debug('Filtered Connections:', links.length);
 
     // Create main group for all elements
     const g = svg.append('g');
@@ -79,7 +100,7 @@ function renderNetworkTopology(topology, containerId, options = {}) {
     svg.call(zoom);
 
     // Create force simulation
-    const simulation = d3.forceSimulation(topology.devices || [])
+    const simulation = d3.forceSimulation(filteredDevices)
         .force('link', d3.forceLink(links)
             .id(d => d.device_id)
             .distance(150))
@@ -102,7 +123,7 @@ function renderNetworkTopology(topology, containerId, options = {}) {
     const node = g.append('g')
         .attr('class', 'nodes')
         .selectAll('circle')
-        .data(topology.devices || [])
+        .data(filteredDevices)
         .enter().append('circle')
         .attr('class', 'node')
         .attr('r', d => d.device_id === 'internet' ? 30 : 20)
@@ -143,7 +164,7 @@ function renderNetworkTopology(topology, containerId, options = {}) {
     const label = g.append('g')
         .attr('class', 'labels')
         .selectAll('text')
-        .data(topology.devices || [])
+        .data(filteredDevices)
         .enter().append('text')
         .text(d => d.hostname)
         .style('font-size', '12px')

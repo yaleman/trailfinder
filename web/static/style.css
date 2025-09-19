@@ -97,6 +97,48 @@ main {
     background: #005a9e;
 }
 
+/* Device Type Filters */
+.device-type-filters {
+    margin-left: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.device-type-filters h4 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 600;
+}
+
+.filter-checkboxes {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.filter-checkboxes label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.9rem;
+    color: #333;
+    cursor: pointer;
+    user-select: none;
+}
+
+.filter-checkboxes input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #007acc;
+    cursor: pointer;
+}
+
+.filter-checkboxes label:hover {
+    color: #007acc;
+}
+
 /* Devices Grid */
 .devices-grid {
     display: grid;
