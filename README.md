@@ -7,11 +7,14 @@ A Rust application for network device discovery and configuration parsing. Trail
 - **Automatic Device Discovery** - SSH into devices and identify brand/type automatically
 - **Configuration Parsing** - Parse network device configurations (supports MikroTik and Cisco)
 - **Web-based Topology Visualization** - Interactive network topology maps with D3.js
+- **Device Filtering** - Filter devices by type with visual indicators on both topology and device list pages
+- **Path Finding** - Find network paths between devices and endpoints
+- **RESTful API** - Complete API with OpenAPI/Swagger documentation
 - **SSH Config Integration** - Uses your existing `~/.ssh/config` for authentication
 - **Multiple Auth Methods** - Supports ssh-agent, key files, and password authentication
 - **JSON Inventory** - Maintains device inventory with caching to avoid unnecessary connections
 - **Extensible Architecture** - Plugin-based parser system for adding new device brands
-- **Comprehensive Testing** - 173+ tests with robust coverage of all major components
+- **Comprehensive Testing** - 253+ tests with robust coverage of all major components
 
 ## Supported Devices
 
@@ -24,6 +27,7 @@ A Rust application for network device discovery and configuration parsing. Trail
 ### Prerequisites
 
 - Rust 1.70+ (uses 2024 edition)
+- Node.js (for JavaScript syntax checking)
 - SSH client configuration (optional but recommended)
 
 ### Build from Source
@@ -42,7 +46,7 @@ The project includes a `justfile` for common development tasks:
 # Install just if you haven't already
 cargo install just
 
-# Check code (build + clippy + tests)
+# Check code (build + clippy + tests + JS syntax)
 just check
 
 # Run clippy linting
@@ -50,6 +54,12 @@ just clippy
 
 # Run tests
 just test
+
+# Check JavaScript syntax
+just check_js
+
+# Format code
+just fmt
 ```
 
 ## Usage
@@ -66,7 +76,7 @@ Create a `devices.json` file with your network devices:
       "ip_address": "192.168.1.1",
       "brand": null,
       "device_type": null,
-      "owner": "Named(\"IT Department\")",
+      "owner": "IT Department",
       "ssh_username": null,
       "ssh_port": 22,
       "ssh_key_path": null,
@@ -94,10 +104,15 @@ SSH_PASSWORD=mypassword cargo run
 ### 3. Web Interface
 
 ```bash
-# Start the web server for topology visualization
+# Start the web server
 cargo run web
 
 # Access at http://localhost:8080
+# Available pages:
+# - /devices - Device inventory with filtering
+# - /topology - Interactive network topology
+# - /pathfinder - Network path discovery
+# - /api-docs - OpenAPI/Swagger documentation
 ```
 
 ### 4. View Results
@@ -110,7 +125,12 @@ The discovery process will:
 - Update the `devices.json` file with discovered information
 - Cache results to avoid re-identification for 24 hours (configurable)
 
-Use the web interface to visualize network topology and explore device relationships interactively.
+Use the web interface to:
+- View and filter device inventory by type and text search
+- Visualize network topology with interactive D3.js maps
+- Find paths between network devices and endpoints
+- Filter devices by type (Router, Switch, Firewall, Access Point, Unknown)
+- Explore device relationships and connections interactively
 
 ## SSH Authentication
 
@@ -204,7 +224,7 @@ impl ConfParser for CiscoParser {
 ### Development Commands
 
 ```bash
-# Run all tests (173+ tests)
+# Run all tests (253+ tests)
 cargo test --quiet
 
 # Run specific test suites
@@ -230,11 +250,12 @@ just check
 
 The project maintains comprehensive test coverage:
 
-- **CLI Integration Tests** - 25+ tests covering command parsing and config validation
-- **SSH Client Tests** - 20+ tests covering connection management and authentication
-- **Core Library Tests** - 32+ tests covering data models and serialization
-- **Brand Parser Tests** - 43+ tests covering MikroTik (23) and Cisco (20) configuration parsing
-- **Total: 173+ tests** providing robust validation of all functionality
+- **CLI Integration Tests** - Command parsing, config validation, and error handling
+- **SSH Client Tests** - Connection management, authentication, and device identification
+- **Core Library Tests** - Data models, serialization, and network discovery
+- **Brand Parser Tests** - MikroTik and Cisco configuration parsing with edge cases
+- **Web API Tests** - REST endpoint validation and response formatting
+- **Total: 253+ tests** providing robust validation of all functionality
 
 ## Security Considerations
 
@@ -245,7 +266,7 @@ The project maintains comprehensive test coverage:
 
 ## License
 
-MPL2.0? I think.
+MPL-2.0
 
 ## Contributing
 
