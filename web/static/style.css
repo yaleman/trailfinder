@@ -110,30 +110,44 @@ main {
     font-weight: 600;
 }
 
-.filter-checkboxes {
+.filter-buttons {
     display: flex;
-    gap: 1rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
 }
 
-.filter-checkboxes label {
+.device-filter-button {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    color: #333;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid #007acc;
+    background: #007acc;
+    color: white;
+    border-radius: 4px;
     cursor: pointer;
+    transition: background-color 0.3s ease;
+    font-family: inherit;
     user-select: none;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
 }
 
-.filter-checkboxes input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: #007acc;
-    cursor: pointer;
+.device-filter-button:not(.active) {
+    border: 1px solid #ddd;
+    background: #f8f9fa;
+    color: #666;
 }
 
-.filter-checkboxes label:hover {
+.device-filter-button:hover {
+    background: #005a9e;
+}
+
+.device-filter-button:not(.active):hover {
+    background: #e9f4ff;
     color: #007acc;
+    border-color: #007acc;
 }
 
 .device-color-indicator {

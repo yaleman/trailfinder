@@ -12,43 +12,36 @@
 <div class="controls">
     <button id="refresh-topology">🔄 Refresh Topology</button>
     <button id="reset-zoom">🎯 Reset Zoom</button>
-    <label>
-        <input type="checkbox" id="hide-device-names"> Hide Device Names
-    </label>
+    <button class="device-filter-button" id="hide-device-names">
+        Hide Device Names
+    </button>
 
     <div class="device-type-filters">
-        <div class="filter-checkboxes">
-            <label>
-                <input type="checkbox" id="filter-router" checked>
+        <div class="filter-buttons">
+            <button class="device-filter-button active" id="filter-router" data-device-type="Router">
                 <span class="device-color-indicator" style="background-color: #e74c3c;"></span>
                 Router
-            </label>
-            <label>
-                <input type="checkbox" id="filter-switch" checked>
+            </button>
+            <button class="device-filter-button active" id="filter-switch" data-device-type="Switch">
                 <span class="device-color-indicator" style="background-color: #27ae60;"></span>
                 Switch
-            </label>
-            <label>
-                <input type="checkbox" id="filter-firewall" checked>
+            </button>
+            <button class="device-filter-button active" id="filter-firewall" data-device-type="Firewall">
                 <span class="device-color-indicator" style="background-color: #e67e22;"></span>
                 Firewall
-            </label>
-            <label>
-                <input type="checkbox" id="filter-accesspoint" checked>
+            </button>
+            <button class="device-filter-button active" id="filter-accesspoint" data-device-type="AccessPoint">
                 <span class="device-color-indicator" style="background-color: #9b59b6;"></span>
                 Access Point
-            </label>
-            <label>
-                <input type="checkbox" id="filter-internet" checked>
+            </button>
+            <button class="device-filter-button active" id="filter-internet" data-device-type="Internet">
                 <span class="device-color-indicator" style="background-color: #3498db;"></span>
                 Internet
-            </label>
-            <label>
-                <input type="checkbox" id="filter-unknown" checked>
+            </button>
+            <button class="device-filter-button active" id="filter-unknown" data-device-type="Unknown">
                 <span class="device-color-indicator" style="background-color: #95a5a6;"></span>
                 Unknown
-            </label>
-
+            </button>
         </div>
     </div>
 </div>

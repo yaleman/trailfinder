@@ -13,14 +13,17 @@ function initializeEventListeners() {
     document.getElementById('refresh-topology').addEventListener('click', loadTopology);
 
     // Hide device names toggle
-    document.getElementById('hide-device-names').addEventListener('change', (e) => {
+    document.getElementById('hide-device-names').addEventListener('click', (e) => {
+        // Toggle active state
+        e.target.classList.toggle('active');
+
         if (topologyData) {
             renderTopology(topologyData);
         }
     });
 
-    // Device type filter checkboxes
-    const deviceTypeCheckboxes = [
+    // Device type filter buttons
+    const deviceTypeButtons = [
         'filter-router',
         'filter-switch',
         'filter-firewall',
@@ -29,10 +32,13 @@ function initializeEventListeners() {
         'filter-internet'
     ];
 
-    deviceTypeCheckboxes.forEach(id => {
-        const checkbox = document.getElementById(id);
-        if (checkbox) {
-            checkbox.addEventListener('change', () => {
+    deviceTypeButtons.forEach(id => {
+        const button = document.getElementById(id);
+        if (button) {
+            button.addEventListener('click', () => {
+                // Toggle active state
+                button.classList.toggle('active');
+
                 if (topologyData) {
                     renderTopology(topologyData);
                 }
@@ -47,7 +53,7 @@ function initializeEventListeners() {
 // Utility Functions
 function getVisibleDeviceTypes() {
     const deviceTypes = [];
-    const checkboxMap = {
+    const buttonMap = {
         'filter-router': 'Router',
         'filter-switch': 'Switch',
         'filter-firewall': 'Firewall',
@@ -55,9 +61,9 @@ function getVisibleDeviceTypes() {
         'filter-unknown': 'Unknown'
     };
 
-    for (const [checkboxId, deviceType] of Object.entries(checkboxMap)) {
-        const checkbox = document.getElementById(checkboxId);
-        if (checkbox && checkbox.checked) {
+    for (const [buttonId, deviceType] of Object.entries(buttonMap)) {
+        const button = document.getElementById(buttonId);
+        if (button && button.classList.contains('active')) {
             deviceTypes.push(deviceType);
         }
     }
@@ -66,13 +72,13 @@ function getVisibleDeviceTypes() {
 }
 
 function shouldShowInternetNode() {
-    const checkbox = document.getElementById('filter-internet');
-    return checkbox ? checkbox.checked : true;
+    const button = document.getElementById('filter-internet');
+    return button ? button.classList.contains('active') : true;
 }
 
 function shouldShowDeviceNames() {
-    const checkbox = document.getElementById('hide-device-names');
-    return checkbox ? !checkbox.checked : true; // Inverted because it's "hide" names
+    const button = document.getElementById('hide-device-names');
+    return button ? !button.classList.contains('active') : true; // Inverted because it's "hide" names
 }
 
 // Network Topology
