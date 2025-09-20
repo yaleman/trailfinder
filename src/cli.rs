@@ -377,13 +377,11 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Web { port, address } => {
             tokio::select! {
-                Ok(()) = tokio::signal::ctrl_c() => {
+                _ = tokio::signal::ctrl_c() => {
                     info!("Quitting...");
                 }
-                Ok(()) = web_server_command(&app_config, &address, port) => {
-                    web_server_command(&app_config, &address, port)
-                        .await
-                        .map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
+                res = web_server_command(&app_config, &address, port) => {
+                    res.map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
                 }
             }
         }

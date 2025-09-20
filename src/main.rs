@@ -13,5 +13,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async { main_func().await })
+        .block_on(main_func())
 }

@@ -14,7 +14,7 @@ use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
 };
-use tracing::{Level, debug, info, instrument, warn};
+use tracing::{Level, debug, error, info, instrument, warn};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -294,6 +294,7 @@ pub async fn list_devices(
     }
 
     tracing::Span::current().record("device_count", devices.len());
+    devices.sort_by(|a, b| a.hostname.cmp(&b.hostname));
     Ok(Json(devices))
 }
 
@@ -736,7 +737,9 @@ pub async fn web_server_command(
     let app = create_router(state);
 
     let bind_addr = format!("{}:{}", address, port);
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .inspect_err(|err| error!("Failed to bind to {}: {}", bind_addr, err))?;
 
     info!("🌐 Web UI available at: http://{}", bind_addr);
     info!(
