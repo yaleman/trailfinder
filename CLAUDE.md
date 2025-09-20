@@ -12,7 +12,7 @@ Trailfinder is a Rust application for network device discovery and configuration
 
 - `cargo build --quiet` - Build the project
 - `cargo run --quiet` - Run the main application
-- `cargo run web --quiet` - Run the web server
+- `cargo run --quiet -- web` - Run the web server
 
 ### Testing
 
