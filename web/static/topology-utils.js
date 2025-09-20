@@ -160,19 +160,24 @@ function renderNetworkTopology(topology, containerId, options = {}) {
             d3.selectAll(`.${tooltip_classname}`).remove();
         });
 
-    // Add labels
-    const label = g.append('g')
-        .attr('class', 'labels')
-        .selectAll('text')
-        .data(filteredDevices)
-        .enter().append('text')
-        .text(d => d.hostname)
-        .style('font-size', '12px')
-        .style('font-weight', 'bold')
-        .style('text-anchor', 'middle')
-        .style('pointer-events', 'none')
-        .style('fill', '#2c3e50')
-        .attr('dy', -35);
+    // Add labels (conditionally)
+    const showDeviceNames = options.showDeviceNames !== undefined ? options.showDeviceNames : true;
+    let label = null;
+
+    if (showDeviceNames) {
+        label = g.append('g')
+            .attr('class', 'labels')
+            .selectAll('text')
+            .data(filteredDevices)
+            .enter().append('text')
+            .text(d => d.hostname)
+            .style('font-size', '12px')
+            .style('font-weight', 'bold')
+            .style('text-anchor', 'middle')
+            .style('pointer-events', 'none')
+            .style('fill', '#2c3e50')
+            .attr('dy', -35);
+    }
 
     // Update positions on simulation tick
     simulation.on('tick', () => {
@@ -186,9 +191,12 @@ function renderNetworkTopology(topology, containerId, options = {}) {
             .attr('cx', d => d.x)
             .attr('cy', d => d.y);
 
-        label
-            .attr('x', d => d.x)
-            .attr('y', d => d.y);
+        // Only update labels if they exist
+        if (label) {
+            label
+                .attr('x', d => d.x)
+                .attr('y', d => d.y);
+        }
     });
 
     // Drag functions

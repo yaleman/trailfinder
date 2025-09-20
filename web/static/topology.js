@@ -12,6 +12,12 @@ function initializeEventListeners() {
     // Refresh button
     document.getElementById('refresh-topology').addEventListener('click', loadTopology);
 
+    // Hide device names toggle
+    document.getElementById('hide-device-names').addEventListener('change', (e) => {
+        if (topologyData) {
+            renderTopology(topologyData);
+        }
+    });
 
     // Device type filter checkboxes
     const deviceTypeCheckboxes = [
@@ -64,16 +70,23 @@ function shouldShowInternetNode() {
     return checkbox ? checkbox.checked : true;
 }
 
+function shouldShowDeviceNames() {
+    const checkbox = document.getElementById('hide-device-names');
+    return checkbox ? !checkbox.checked : true; // Inverted because it's "hide" names
+}
+
 // Network Topology
 let topologyControls = null;
 
 async function loadTopology() {
     const visibleDeviceTypes = getVisibleDeviceTypes();
     const showInternet = shouldShowInternetNode();
+    const showDeviceNames = shouldShowDeviceNames();
 
     const result = await loadAndRenderTopology('topology-container', {
         visibleDeviceTypes,
         showInternet,
+        showDeviceNames,
         onNodeClick: showDeviceDetails
     });
 
@@ -93,10 +106,12 @@ function renderTopology(topology) {
     // Re-render with current settings
     const visibleDeviceTypes = getVisibleDeviceTypes();
     const showInternet = shouldShowInternetNode();
+    const showDeviceNames = shouldShowDeviceNames();
 
     const result = renderNetworkTopology(topology, 'topology-container', {
         visibleDeviceTypes,
         showInternet,
+        showDeviceNames,
         onNodeClick: showDeviceDetails
     });
 

@@ -20,6 +20,18 @@ fmt:
 cargo-check:
     cargo check
 
+# Check JavaScript syntax
+check_js:
+    #!/bin/bash
+    echo "Checking JavaScript syntax..."
+    for file in web/static/*.js; do
+        if [ -f "$file" ]; then
+            echo "Checking $file..."
+            node -c "$file" || exit 1
+        fi
+    done
+    echo "All JavaScript files have valid syntax"
+
 # Build the project
 build:
     cargo build
@@ -36,8 +48,8 @@ run:
 clean:
     cargo clean
 
-# Run all checks (clippy, fmt, test)
-check: fmt clippy test
+# Run all checks (clippy, fmt, test, js)
+check: fmt clippy check_js test
 
 docker_build:
     docker buildx build --load --tag ghcr.io/yaleman/trailfinder:latest .

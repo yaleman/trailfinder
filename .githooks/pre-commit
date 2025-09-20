@@ -13,3 +13,9 @@ cargo clippy --quiet --all-targets || {
     echo "The above came from running cargo clippy, please review them and correct outstanding issues before continuing"
     exit 2
 }
+
+# Check JavaScript syntax
+just check_js || {
+    echo "JavaScript syntax check failed, please fix the issues before continuing"
+    exit 2
+}
