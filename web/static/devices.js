@@ -15,6 +15,26 @@ function initializeEventListeners() {
     // Device filter
     document.getElementById('device-filter').addEventListener('input', filterDevices);
 
+    // Device type filter buttons
+    const deviceTypeButtons = [
+        'filter-router',
+        'filter-switch',
+        'filter-firewall',
+        'filter-accesspoint',
+        'filter-unknown'
+    ];
+
+    deviceTypeButtons.forEach(id => {
+        const button = document.getElementById(id);
+        if (button) {
+            button.addEventListener('click', () => {
+                // Toggle active state
+                button.classList.toggle('active');
+                filterDevices();
+            });
+        }
+    });
+
     // Initialize modal event listeners from common.js
     initializeModalEventListeners();
 }
@@ -99,13 +119,51 @@ function renderDevices(devices) {
     });
 }
 
+// Utility Functions
+function getVisibleDeviceTypes() {
+    const deviceTypes = [];
+    const buttonMap = {
+        'filter-router': 'Router',
+        'filter-switch': 'Switch',
+        'filter-firewall': 'Firewall',
+        'filter-accesspoint': 'AccessPoint',
+        'filter-unknown': 'Unknown'
+    };
+
+    for (const [buttonId, deviceType] of Object.entries(buttonMap)) {
+        const button = document.getElementById(buttonId);
+        if (button && button.classList.contains('active')) {
+            deviceTypes.push(deviceType);
+        }
+    }
+
+    return deviceTypes;
+}
+
+function shouldShowDeviceType(deviceType) {
+    const visibleTypes = getVisibleDeviceTypes();
+    // Handle case-insensitive matching and normalize device types
+    const normalizedDeviceType = deviceType || 'Unknown';
+    return visibleTypes.includes(normalizedDeviceType);
+}
+
 function filterDevices() {
     const filterValue = document.getElementById('device-filter').value.toLowerCase();
-    const filteredDevices = devicesData.filter(device =>
-        device.hostname.toLowerCase().includes(filterValue) ||
-        (device.name && device.name.toLowerCase().includes(filterValue)) ||
-        (device.brand && device.brand.toLowerCase().includes(filterValue))
-    );
+    const visibleDeviceTypes = getVisibleDeviceTypes();
+
+    const filteredDevices = devicesData.filter(device => {
+        // Text filter check
+        const matchesTextFilter = device.hostname.toLowerCase().includes(filterValue) ||
+            (device.name && device.name.toLowerCase().includes(filterValue)) ||
+            (device.brand && device.brand.toLowerCase().includes(filterValue));
+
+        // Device type filter check
+        const deviceType = device.device_type || 'Unknown';
+        const matchesTypeFilter = shouldShowDeviceType(deviceType);
+
+        // Device must match both filters
+        return matchesTextFilter && matchesTypeFilter;
+    });
 
     renderDevices(filteredDevices);
 }

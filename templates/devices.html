@@ -7,6 +7,31 @@
 <div class="controls">
     <input type="text" id="device-filter" placeholder="Filter devices...">
     <button id="refresh-devices">🔄 Refresh</button>
+
+    <div class="device-type-filters">
+        <div class="filter-buttons">
+            <button class="device-filter-button active" id="filter-router" data-device-type="Router">
+                <span class="device-color-indicator" style="background-color: #e74c3c;"></span>
+                Router
+            </button>
+            <button class="device-filter-button active" id="filter-switch" data-device-type="Switch">
+                <span class="device-color-indicator" style="background-color: #27ae60;"></span>
+                Switch
+            </button>
+            <button class="device-filter-button active" id="filter-firewall" data-device-type="Firewall">
+                <span class="device-color-indicator" style="background-color: #e67e22;"></span>
+                Firewall
+            </button>
+            <button class="device-filter-button active" id="filter-accesspoint" data-device-type="AccessPoint">
+                <span class="device-color-indicator" style="background-color: #9b59b6;"></span>
+                Access Point
+            </button>
+            <button class="device-filter-button active" id="filter-unknown" data-device-type="Unknown">
+                <span class="device-color-indicator" style="background-color: #95a5a6;"></span>
+                Unknown
+            </button>
+        </div>
+    </div>
 </div>
 
 <div id="devices-list" class="devices-grid">
