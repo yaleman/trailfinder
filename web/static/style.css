@@ -51,7 +51,6 @@ nav {
 
 /* Main Content */
 main {
-    max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
 }
@@ -220,7 +219,8 @@ ul.device-stats  {
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     position: relative;
-    height: 600px;
+    min-height: 40rem;
+    max-height: 80%;
 }
 
 #topology-svg {
