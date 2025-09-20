@@ -96,6 +96,19 @@ main {
     background: #005a9e;
 }
 
+/* Style for main action buttons (Refresh, Reset Zoom, Hide Device Names) */
+.controls button:not(.device-filter-button) {
+    border: 1px solid #ddd;
+    background: #f8f9fa;
+    color: #666;
+}
+
+.controls button:not(.device-filter-button):hover {
+    background: #e9f4ff;
+    color: #007acc;
+    border-color: #007acc;
+}
+
 /* Device Type Filters */
 .device-type-filters {
     margin-left: auto;
