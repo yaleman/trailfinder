@@ -33,7 +33,6 @@
 
 #### Configuration & State Management
 - [ ] Add configuration validation with schema validation and migration support
-- [ ] Implement versioned configuration with backup/restore capabilities
 - [ ] Add environment-based configuration overrides
 - [ ] Add audit trail for configuration changes and device state updates (JSON-based)
 
@@ -54,17 +53,15 @@
 #### Testing & Quality
 - [ ] Add integration test suite for end-to-end workflows
 - [ ] Implement property-based testing for data model validation
-- [ ] Add performance benchmarks for critical paths
 - [ ] Add contract testing for brand parser implementations
 
 #### Developer Experience
 - [ ] Add CLI autocomplete support for better usability
 - [ ] Implement configuration wizards for initial setup
-- [ ] Add migration tools for upgrading between versions
 - [ ] Improve error messages with actionable suggestions
 
 #### Security
+
 - [ ] Implement secure credential storage using system keyring
 - [ ] Add TLS certificate validation for HTTPS connections
-- [ ] Add rate limiting for API endpoints
 - [ ] Add comprehensive input validation for all network device data
