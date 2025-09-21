@@ -166,6 +166,11 @@ impl DeviceHandler for Ubiquiti {
 
         if let Some(interfaces) = lldp_data["lldp"]["interface"].as_array() {
             for interface_data in interfaces {
+                debug!(
+                    "Ubiquiti LLDP Interface data: {}",
+                    serde_json::to_string(&interface_data)
+                        .unwrap_or(format!("{:?}", interface_data))
+                );
                 if let Some(interface_obj) = interface_data.as_object() {
                     for (interface_name, interface_info) in interface_obj {
                         debug!("Processing LLDP data for interface: {}", interface_name);

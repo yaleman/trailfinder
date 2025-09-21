@@ -1,3 +1,5 @@
+use crate::find_kv;
+
 use super::prelude::*;
 
 pub struct Mikrotik {
@@ -9,21 +11,6 @@ pub struct Mikrotik {
     interfaces: Vec<Interface>,
     system_identity: Option<String>,
     ipsec_peers: Vec<IpsecPeer>,
-}
-
-pub(crate) fn find_kv(parts: &Vec<&str>, key: &str) -> Option<String> {
-    parts
-        .iter()
-        .find(|&&part| part.starts_with(&format!("{key}=")))
-        .map(|s| {
-            let comment = s.trim_start_matches(&format!("{key}=")).to_string();
-            // strip leading/trailing quotes
-            if comment.starts_with('"') && comment.ends_with('"') {
-                comment[1..comment.len() - 1].to_string()
-            } else {
-                comment
-            }
-        })
 }
 
 impl DeviceHandler for Mikrotik {
@@ -248,29 +235,7 @@ impl DeviceHandler for Mikrotik {
                 gateway,
                 distance,
             };
-            // if let Ok(addr) = target.parse::<IpAddr>() {
-            //     route.gateway = Some(addr);
-            // } else {
-            //     // Look for existing interface by name - will be set properly after build
-            //     if let Some(existing_interface) =
-            //         self.interfaces.iter().find(|iface| iface.name == target)
-            //     {
-            //         route.interface_id = Some(existing_interface.interface_id)
-            //     } else {
-            //         // Create a stub interface if not found and add it to interfaces
-            //         let stub_interface = Interface {
-            //             interface_id: Uuid::new_v4(),
-            //             name: target.to_string(),
-            //             vlan: None,
-            //             addresses: Vec::new(),
-            //             interface_type: InterfaceType::Other(target.to_string()),
-            //             comment: Some("Referenced from route, not in interface list".to_string()),
-            //         };
-
-            //         self.interfaces.push(stub_interface);
-            //     }
-            // }
-            info!("Adding route {route:?}");
+            info!("Adding route {route}");
             self.routes.push(route);
             if line.is_empty() {
                 current_line.clear();

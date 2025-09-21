@@ -1,4 +1,5 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::{Arc, RwLock}, time::Duration};
+use std::sync::LazyLock;
 
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
@@ -9,6 +10,12 @@ use tracing::{debug, error, trace, warn};
 use crate::cache::CommandCache;
 use crate::config::ssh::SshConfig;
 use crate::{DeviceType, TrailFinderError, config::DeviceBrand};
+
+// Global authentication cache for runtime persistence
+// Maps hostname to successful authentication method
+static AUTH_CACHE: LazyLock<RwLock<HashMap<String, AuthMethod>>> = LazyLock::new(|| {
+    RwLock::new(HashMap::new())
+});
 
 #[derive(Debug, Clone)]
 pub enum AuthMethod {
@@ -186,16 +193,62 @@ impl SshClient {
             "Connecting with processed device config"
         );
 
-        let mut client = Self::connect(
-            ip_address,
-            &username,
-            None, // no password from config
-            &key_paths,
-            device_config.ssh_key_passphrase.as_deref(),
-            use_ssh_agent,
-            timeout,
-        )
-        .await?;
+        // Check cache for previously successful authentication method
+        let mut client = if let Some(cached_auth_method) = Self::get_cached_auth_method(&device_config.hostname) {
+            debug!("🎯 Attempting cached authentication method for {}", device_config.hostname);
+
+            // Create client and try cached method first
+            let mut client = Self::new(ip_address, username.to_string(), timeout);
+            let mut session = client.create_session().await?;
+
+            if client.authenticate_session(&mut session, &cached_auth_method).await? {
+                debug!("✅ Cached authentication method succeeded for {}", device_config.hostname);
+                client.connection_info.successful_auth = Some(cached_auth_method);
+                client.session = Some(session);
+                client
+            } else {
+                debug!("❌ Cached authentication method failed for {}, invalidating cache and falling back to discovery", device_config.hostname);
+                Self::invalidate_cached_auth_method(&device_config.hostname);
+
+                // Fall back to full discovery
+                let client = Self::connect(
+                    ip_address,
+                    &username,
+                    None, // no password from config
+                    &key_paths,
+                    device_config.ssh_key_passphrase.as_deref(),
+                    use_ssh_agent,
+                    timeout,
+                )
+                .await?;
+
+                // Cache the newly discovered authentication method
+                if let Some(ref auth_method) = client.connection_info.successful_auth {
+                    Self::cache_auth_method(&device_config.hostname, auth_method);
+                }
+
+                client
+            }
+        } else {
+            // No cached method, use normal discovery
+            let client = Self::connect(
+                ip_address,
+                &username,
+                None, // no password from config
+                &key_paths,
+                device_config.ssh_key_passphrase.as_deref(),
+                use_ssh_agent,
+                timeout,
+            )
+            .await?;
+
+            // Cache the newly discovered authentication method
+            if let Some(ref auth_method) = client.connection_info.successful_auth {
+                Self::cache_auth_method(&device_config.hostname, auth_method);
+            }
+
+            client
+        };
 
         // Set hostname and initialize cache for automatic response caching
         client.hostname = device_config.hostname.clone();
@@ -836,6 +889,8 @@ impl SshClient {
                 let mut session = self.create_session().await?;
                 if let Some(auth_method) = &self.connection_info.successful_auth.clone() {
                     if !self.authenticate_session(&mut session, auth_method).await? {
+                        // Invalidate cache since the cached auth method failed
+                        Self::invalidate_cached_auth_method(&self.hostname);
                         return Err(SshError::Authentication(
                             "Cached authentication method failed".to_string(),
                         ));
@@ -938,6 +993,74 @@ impl SshClient {
             output.len()
         );
         Ok(output)
+    }
+}
+
+// Authentication cache helper functions
+impl SshClient {
+    /// Get cached authentication method for a hostname
+    fn get_cached_auth_method(hostname: &str) -> Option<AuthMethod> {
+        match AUTH_CACHE.read() {
+            Ok(cache) => {
+                let result = cache.get(hostname).cloned();
+                if result.is_some() {
+                    debug!("🎯 Cache hit: Found cached auth method for {}", hostname);
+                } else {
+                    debug!("🔍 Cache miss: No cached auth method for {}", hostname);
+                }
+                result
+            }
+            Err(e) => {
+                warn!("Failed to read auth cache: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Store successful authentication method in cache
+    #[allow(dead_code)]
+    fn cache_auth_method(hostname: &str, auth_method: &AuthMethod) {
+        match AUTH_CACHE.write() {
+            Ok(mut cache) => {
+                cache.insert(hostname.to_string(), auth_method.clone());
+                debug!("💾 Cached auth method for {}: {:?}", hostname, auth_method);
+            }
+            Err(e) => {
+                warn!("Failed to write to auth cache: {}", e);
+            }
+        }
+    }
+
+    /// Remove cached authentication method (used when cached method fails)
+    #[allow(dead_code)]
+    fn invalidate_cached_auth_method(hostname: &str) {
+        match AUTH_CACHE.write() {
+            Ok(mut cache) => {
+                if cache.remove(hostname).is_some() {
+                    debug!("🗑️ Invalidated cached auth method for {}", hostname);
+                } else {
+                    debug!("🔍 No cached auth method to invalidate for {}", hostname);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to invalidate auth cache entry: {}", e);
+            }
+        }
+    }
+
+    /// Clear all cached authentication methods (for debugging/testing)
+    #[allow(dead_code)]
+    fn clear_auth_cache() {
+        match AUTH_CACHE.write() {
+            Ok(mut cache) => {
+                let count = cache.len();
+                cache.clear();
+                debug!("🧹 Cleared {} cached auth methods", count);
+            }
+            Err(e) => {
+                warn!("Failed to clear auth cache: {}", e);
+            }
+        }
     }
 }
 
@@ -1547,5 +1670,124 @@ Host empty-lines.example.com
             .expect("Should find config despite empty lines");
         assert_eq!(config.user, Some("emptyuser".to_string()));
         assert!(!config.get_identity_files().is_empty());
+    }
+
+    // Authentication cache tests
+    #[test]
+    fn test_auth_cache_operations() {
+        let hostname = "test-cache-ops.example.com";
+        let auth_method = AuthMethod::SshAgent;
+
+        // Ensure clean state for this test
+        SshClient::invalidate_cached_auth_method(hostname);
+
+        // Test cache miss
+        assert!(SshClient::get_cached_auth_method(hostname).is_none());
+
+        // Test cache store
+        SshClient::cache_auth_method(hostname, &auth_method);
+
+        // Test cache hit
+        let cached = SshClient::get_cached_auth_method(hostname);
+        assert!(cached.is_some());
+        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+
+        // Test cache invalidation
+        SshClient::invalidate_cached_auth_method(hostname);
+        assert!(SshClient::get_cached_auth_method(hostname).is_none());
+    }
+
+    #[test]
+    fn test_auth_cache_multiple_devices() {
+        let hostname1 = "multi-device1.example.com";
+        let hostname2 = "multi-device2.example.com";
+        let auth_method1 = AuthMethod::SshAgent;
+        let auth_method2 = AuthMethod::KeyFile {
+            path: "/path/to/key".to_string(),
+            passphrase: None,
+        };
+
+        // Ensure clean state for this test
+        SshClient::invalidate_cached_auth_method(hostname1);
+        SshClient::invalidate_cached_auth_method(hostname2);
+
+        // Cache different auth methods for different devices
+        SshClient::cache_auth_method(hostname1, &auth_method1);
+        SshClient::cache_auth_method(hostname2, &auth_method2);
+
+        // Verify both are cached correctly
+        let cached1 = SshClient::get_cached_auth_method(hostname1);
+        let cached2 = SshClient::get_cached_auth_method(hostname2);
+
+        assert!(cached1.is_some());
+        assert!(cached2.is_some());
+        assert!(matches!(cached1.unwrap(), AuthMethod::SshAgent));
+        assert!(matches!(cached2.unwrap(), AuthMethod::KeyFile { .. }));
+
+        // Invalidate one device and verify the other remains
+        SshClient::invalidate_cached_auth_method(hostname1);
+        assert!(SshClient::get_cached_auth_method(hostname1).is_none());
+        assert!(SshClient::get_cached_auth_method(hostname2).is_some());
+
+        // Clean up
+        SshClient::invalidate_cached_auth_method(hostname2);
+    }
+
+    #[test]
+    fn test_auth_cache_overwrite() {
+        let hostname = "overwrite-test.example.com";
+        let auth_method1 = AuthMethod::SshAgent;
+        let auth_method2 = AuthMethod::Password("password".to_string());
+
+        // Ensure clean state for this test
+        SshClient::invalidate_cached_auth_method(hostname);
+
+        // Cache first auth method
+        SshClient::cache_auth_method(hostname, &auth_method1);
+        let cached = SshClient::get_cached_auth_method(hostname);
+        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+
+        // Overwrite with second auth method
+        SshClient::cache_auth_method(hostname, &auth_method2);
+        let cached = SshClient::get_cached_auth_method(hostname);
+        assert!(matches!(cached.unwrap(), AuthMethod::Password(_)));
+
+        // Clean up
+        SshClient::invalidate_cached_auth_method(hostname);
+    }
+
+    #[test]
+    fn test_auth_cache_thread_safety() {
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static THREAD_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                thread::spawn(move || {
+                    let thread_id = THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    let hostname = format!("thread-safety-{}.example.com", thread_id);
+                    let auth_method = AuthMethod::SshAgent;
+
+                    // Ensure clean state for this thread's hostname
+                    SshClient::invalidate_cached_auth_method(&hostname);
+
+                    // Each thread caches and retrieves an auth method
+                    SshClient::cache_auth_method(&hostname, &auth_method);
+                    let cached = SshClient::get_cached_auth_method(&hostname);
+                    assert!(cached.is_some());
+                    assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+
+                    // Clean up after test
+                    SshClient::invalidate_cached_auth_method(&hostname);
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }
