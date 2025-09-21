@@ -758,23 +758,17 @@ async fn update_command(
             // Apply CLI-provided SSH parameters for runtime use (no prompting yet)
             apply_ssh_params_no_prompts(&mut device_config, &username, &keyfile, &key_passphrase);
 
-            tasks.spawn(identify_and_interrogate_device(device_config, cached));
+            let hostname_clone = hostname.clone();
+            tasks.spawn(async move {
+                let result = identify_and_interrogate_device(device_config, cached).await;
+                (hostname_clone, result)
+            });
         }
     }
 
     while let Some(res) = tasks.join_next().await {
         match res {
-            Ok(Ok((device_id, brand, device_type, device_state))) => {
-                let hostname = match app_config.get_hostname_by_id(device_id) {
-                    Some(val) => val,
-                    None => {
-                        error!("Failed to get hostname for device ID {}", device_id);
-                        return Err(TrailFinderError::NotFound(format!(
-                            "Couldn't find device with ID {}",
-                            device_id
-                        )));
-                    }
-                };
+            Ok((hostname, Ok((_device_id, brand, device_type, device_state)))) => {
                 info!(
                     "Updated {hostname} {brand} {device_type} - {} interfaces, {} routes",
                     device_state.device.interfaces.len(),
@@ -793,11 +787,11 @@ async fn update_command(
                     Err(e) => warn!("Failed to save updated device state for {hostname}: {e}"),
                 }
             }
-            Ok(Err(e)) => {
-                error!("Error during device update: {}", e);
+            Ok((hostname, Err(e))) => {
+                error!("Error during device update for {hostname}: {}", e);
             }
             Err(e) => {
-                error!("Failed to update {}", e);
+                error!("Task failed to complete: {}", e);
             }
         }
     }
