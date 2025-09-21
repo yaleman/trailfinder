@@ -17,12 +17,6 @@
 
 ### High Priority (Core Functionality)
 
-#### SSH & Authentication Enhancements
-- [x] SSH agent integration with russh AgentClient (COMPLETE: connects to SSH agent, lists identities, implements full signing capability via authenticate_publickey_with, supports all key types including Ed25519 and RSA)
-- [ ] Add connection pooling to reuse SSH connections efficiently
-- [ ] Implement retry logic with exponential backoff for failed connections
-- [ ] Add SSH connection health monitoring and automatic reconnection
-
 #### Architecture & Modularity
 - [ ] Extract core domain models into separate crate for better reusability
 - [ ] Implement dependency injection pattern for better testability and modularity
