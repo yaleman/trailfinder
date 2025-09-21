@@ -1148,7 +1148,7 @@ pub(crate) fn setup_test_logging() {
                 .with_test_writer()
                 .with_level(true),
         )
-        .with(tracing_subscriber::EnvFilter::new("debug"))
+        .with(tracing_subscriber::EnvFilter::new("debug,russh::client=info,russh::sshbuffer=info,russh::keys::agent::client=info,russh::keys::agent=info"))
         .try_init();
 }
 

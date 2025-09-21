@@ -304,7 +304,7 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
     let env_filter_str = if cli.debug { "debug" } else { "info" };
 
     let env_filter = EnvFilter::new(format!(
-        "{env_filter_str},russh::client=info,russh::sshbuffer=info"
+        "{env_filter_str},russh::client=info,russh::sshbuffer=info,russh::keys::agent::client=info,russh::keys::agent=info"
     ));
 
     tracing_subscriber::registry()
