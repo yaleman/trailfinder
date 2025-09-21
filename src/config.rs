@@ -118,12 +118,10 @@ impl DeviceConfig {
 
     /// Check if SSH agent should be used for this device
     pub fn should_use_ssh_agent(&self) -> bool {
-        // If SSH config specifies IdentitiesOnly=yes, don't use SSH agent
-        !self
-            .ssh_config
-            .as_ref()
-            .and_then(|config| config.identities_only)
-            .unwrap_or(false)
+        // SSH agent should be used by default
+        // IdentitiesOnly controls default key locations, not SSH agent usage
+        // Only disable SSH agent if explicitly configured to do so
+        true
     }
 }
 

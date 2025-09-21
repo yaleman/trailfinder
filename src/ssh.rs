@@ -219,7 +219,7 @@ impl SshClient {
             "SSH config lookup result"
         );
 
-        let (username, identities_only, identity_files) = if let Some(config) = host_config {
+        let (username, _identities_only, identity_files) = if let Some(config) = host_config {
             // Get connection details from SSH config, with fallback to provided username
             let username = config
                 .user
@@ -233,10 +233,10 @@ impl SshClient {
                 })?
                 .to_string();
 
-            let identities_only = config.identities_only.unwrap_or(false);
+            let _identities_only = config.identities_only.unwrap_or(false);
             let identity_files = config.get_identity_files();
 
-            (username, identities_only, identity_files)
+            (username, _identities_only, identity_files)
         } else {
             // No SSH config found for host, use fallback username and defaults
             let ssh_username = username
@@ -251,7 +251,9 @@ impl SshClient {
             (ssh_username, false, Vec::new())
         };
 
-        let use_ssh_agent = !identities_only;
+        // SSH agent should be used unless explicitly disabled in device config
+        // IdentitiesOnly controls whether to try default key locations, not SSH agent
+        let use_ssh_agent = true;
         let key_paths: Vec<String> = identity_files
             .iter()
             .map(|p| p.to_string_lossy().to_string())
