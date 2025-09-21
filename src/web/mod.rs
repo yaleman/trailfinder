@@ -7,9 +7,14 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{get, post},
 };
+use axum_server::tls_rustls::RustlsConfig;
 use chrono::{DateTime, Utc};
+use rustls_pki_types::{
+    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+    pem::PemObject,
+};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fs, io::BufReader, path::Path as StdPath, sync::Arc};
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
@@ -17,6 +22,10 @@ use tower_http::{
 use tracing::{Level, debug, error, info, instrument, warn};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
+use x509_parser::{
+    extensions::{GeneralName, ParsedExtension},
+    parse_x509_certificate,
+};
 
 use crate::{
     Device, DeviceType, Owner, PeerConnection, TrailFinderError, config::AppConfig,
@@ -25,6 +34,126 @@ use crate::{
 use uuid::Uuid;
 
 pub(crate) mod on_response;
+
+/// Extract hostname from X.509 certificate
+/// Priority: SAN (Subject Alternative Names) > Common Name (CN)
+fn extract_hostname_from_cert(cert_path: &StdPath) -> Result<String, TrailFinderError> {
+    let cert_file = fs::File::open(cert_path).map_err(|e| {
+        TrailFinderError::Generic(format!("Failed to open certificate file: {}", e))
+    })?;
+
+    let mut cert_reader = BufReader::new(cert_file);
+    let cert_chain: Result<Vec<_>, _> = CertificateDer::pem_reader_iter(&mut cert_reader).collect();
+    let cert_chain = cert_chain
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to parse certificate: {}", e)))?;
+
+    if cert_chain.is_empty() {
+        return Err(TrailFinderError::Generic(
+            "No certificates found in file".to_string(),
+        ));
+    }
+
+    // Parse the first certificate
+    let cert_der = &cert_chain[0];
+    let (_, cert) = parse_x509_certificate(cert_der.as_ref()).map_err(|e| {
+        TrailFinderError::Generic(format!("Failed to parse X.509 certificate: {}", e))
+    })?;
+
+    // First try to extract from Subject Alternative Names (SAN)
+    for extension in cert.extensions() {
+        if extension.oid == x509_parser::oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME
+            && let ParsedExtension::SubjectAlternativeName(san) = extension.parsed_extension()
+        {
+            for name in &san.general_names {
+                if let GeneralName::DNSName(dns_name) = name {
+                    return Ok(dns_name.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback to Common Name (CN) from subject
+    let subject = &cert.subject();
+    for rdn in subject.iter_common_name() {
+        if let Ok(cn) = rdn.as_str() {
+            return Ok(cn.to_string());
+        }
+    }
+
+    Err(TrailFinderError::Generic(
+        "No hostname found in certificate (neither SAN nor CN)".to_string(),
+    ))
+}
+
+/// Parse private key from PEM file, trying multiple formats
+/// Supports RSA, ECDSA (including prime256v1/P-256), and PKCS#8 keys
+fn parse_private_key_file(key_path: &StdPath) -> Result<PrivateKeyDer<'static>, TrailFinderError> {
+    let key_file = fs::File::open(key_path)
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to open key file: {}", e)))?;
+
+    let mut key_reader = BufReader::new(key_file);
+
+    // First try the general private_key function which should handle most formats
+    match PrivateKeyDer::from_pem_reader(&mut key_reader) {
+        Ok(key) => {
+            info!("Successfully parsed private key using general parser");
+            return Ok(key);
+        }
+        Err(err) => {
+            warn!(
+                "General private key parsing failed: {}. Trying specific formats...",
+                err
+            );
+        }
+    }
+
+    // If that fails, try specific formats
+    // Reset the reader
+    let key_file = fs::File::open(key_path)
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to reopen key file: {}", e)))?;
+    let mut key_reader = BufReader::new(key_file);
+
+    // Try PKCS#8 format (supports both RSA and ECDSA)
+    let pkcs8_keys: Result<Vec<_>, _> =
+        PrivatePkcs8KeyDer::pem_reader_iter(&mut key_reader).collect();
+    if let Ok(keys) = pkcs8_keys
+        && !keys.is_empty()
+    {
+        info!("Successfully parsed PKCS#8 private key");
+        return Ok(PrivateKeyDer::Pkcs8(keys[0].clone_key()));
+    }
+
+    // Reset and try EC private keys (for ECDSA keys in SEC1 format)
+    let key_file = fs::File::open(key_path)
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to reopen key file: {}", e)))?;
+    let mut key_reader = BufReader::new(key_file);
+
+    let ec_keys: Result<Vec<_>, _> = PrivateSec1KeyDer::pem_reader_iter(&mut key_reader).collect();
+    if let Ok(keys) = ec_keys
+        && !keys.is_empty()
+    {
+        info!("Successfully parsed EC private key (ECDSA, including prime256v1/P-256)");
+        return Ok(PrivateKeyDer::Sec1(keys[0].clone_key()));
+    }
+
+    // Reset and try RSA private keys
+    let key_file = fs::File::open(key_path)
+        .map_err(|e| TrailFinderError::Generic(format!("Failed to reopen key file: {}", e)))?;
+    let mut key_reader = BufReader::new(key_file);
+
+    let rsa_keys: Result<Vec<_>, _> =
+        PrivatePkcs1KeyDer::pem_reader_iter(&mut key_reader).collect();
+    if let Ok(keys) = rsa_keys
+        && !keys.is_empty()
+    {
+        info!("Successfully parsed RSA private key");
+        return Ok(PrivateKeyDer::Pkcs1(keys[0].clone_key()));
+    }
+
+    Err(TrailFinderError::Generic(
+        "No supported private key found in key file. Supported formats: PKCS#8, EC/ECDSA (including prime256v1/P-256), and RSA".to_string()
+    ))
+}
 
 #[derive(OpenApi)]
 #[openapi(
@@ -728,31 +857,131 @@ pub async fn web_server_command(
     address: &str,
     port: u16,
 ) -> Result<(), TrailFinderError> {
-    info!("Starting web server on {}:{}", address, port);
-
     let state = AppState {
         config: Arc::new(app_config.clone()),
     };
 
     let app = create_router(state);
-
     let bind_addr = format!("{}:{}", address, port);
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
+
+    // Check if TLS is configured
+    if app_config.is_tls_configured() {
+        let cert_path = app_config.get_tls_cert_file().ok_or_else(|| {
+            TrailFinderError::Generic("TLS certificate file not configured".to_string())
+        })?;
+        let key_path = app_config
+            .get_tls_key_file()
+            .ok_or_else(|| TrailFinderError::Generic("TLS key file not configured".to_string()))?;
+
+        info!("Starting HTTPS web server on {}:{}", address, port);
+        info!("Using TLS certificate: {}", cert_path.display());
+        info!("Using TLS key: {}", key_path.display());
+
+        // Determine hostname (explicit override or extract from certificate)
+        let (hostname, hostname_source) = if let Some(explicit_hostname) = app_config.get_tls_hostname() {
+            info!("Using explicit TLS hostname: {}", explicit_hostname);
+            (explicit_hostname.to_string(), "explicitly configured")
+        } else {
+            info!("Extracting hostname from certificate...");
+            let extracted = extract_hostname_from_cert(cert_path)?;
+            info!("Extracted hostname from certificate: {}", extracted);
+            (extracted, "extracted from certificate")
+        };
+
+        // Load TLS certificate and key as raw PEM data
+        let cert_pem = fs::read_to_string(cert_path).map_err(|e| {
+            TrailFinderError::Generic(format!("Failed to read certificate file: {}", e))
+        })?;
+
+        // Validate certificate parsing
+        let cert_file = fs::File::open(cert_path).map_err(|e| {
+            TrailFinderError::Generic(format!(
+                "Failed to open certificate file for validation: {}",
+                e
+            ))
+        })?;
+        let mut cert_reader = BufReader::new(cert_file);
+        let cert_validation: Result<Vec<_>, _> =
+            CertificateDer::pem_reader_iter(&mut cert_reader).collect();
+        match cert_validation {
+            Ok(certs) => info!(
+                "Successfully validated {} certificate(s) in PEM file",
+                certs.len()
+            ),
+            Err(e) => warn!("Certificate validation warning: {}", e),
+        }
+
+        let key_pem = fs::read_to_string(key_path)
+            .map_err(|e| TrailFinderError::Generic(format!("Failed to read key file: {}", e)))?;
+
+        // Validate that we can parse the key (for better error messages)
+        let key_validation = parse_private_key_file(key_path)?;
+        match &key_validation {
+            PrivateKeyDer::Pkcs1(_) => info!("Validated RSA private key (PKCS#1 format)"),
+            PrivateKeyDer::Pkcs8(_) => info!(
+                "Validated private key (PKCS#8 format - supports RSA/ECDSA including prime256v1)"
+            ),
+            PrivateKeyDer::Sec1(_) => {
+                info!("Validated ECDSA private key (SEC1 format - including prime256v1/P-256)")
+            }
+            _ => info!("Validated private key (unknown format)"),
+        }
+        let crypto = rustls::crypto::aws_lc_rs::default_provider();
+        crypto.install_default().map_err(|_err| {
+            TrailFinderError::Crypto("Failed to install AWS-LC-Rust crypto provider".to_string())
+        })?;
+
+        let tls_config = RustlsConfig::from_pem(cert_pem.into_bytes(), key_pem.into_bytes())
+            .await
+            .map_err(|e| {
+                TrailFinderError::Generic(format!("Failed to create TLS config: {}", e))
+            })?;
+
+        info!("🔒 Web UI available at: https://{}:{}", hostname, port);
+        info!(
+            "📊 API documentation available at: https://{}:{}/api-docs",
+            hostname, port
+        );
+        info!(
+            "📋 OpenAPI specification at: https://{}:{}/api-docs/openapi.json",
+            hostname, port
+        );
+        info!("🌐 TLS hostname: {} ({})", hostname, hostname_source);
+        info!("Press Ctrl+C to stop the server");
+
+        axum_server::bind_rustls(
+            bind_addr
+                .parse()
+                .map_err(|e| TrailFinderError::Generic(format!("Invalid bind address: {}", e)))?,
+            tls_config,
+        )
+        .serve(app.into_make_service())
         .await
-        .inspect_err(|err| error!("Failed to bind to {}: {}", bind_addr, err))?;
+        .map_err(|e| TrailFinderError::Generic(format!("HTTPS server error: {}", e)))?;
+    } else {
+        // HTTP mode (existing behavior)
+        info!("Starting HTTP web server on {}:{}", address, port);
+        info!(
+            "💡 To enable HTTPS, configure tls_cert_file and tls_key_file in your config or use --tls-cert and --tls-key options"
+        );
 
-    info!("🌐 Web UI available at: http://{}", bind_addr);
-    info!(
-        "📊 API documentation available at: http://{}/api-docs",
-        bind_addr
-    );
-    info!(
-        "📋 OpenAPI specification at: http://{}/api-docs/openapi.json",
-        bind_addr
-    );
-    info!("Press Ctrl+C to stop the server");
+        let listener = tokio::net::TcpListener::bind(&bind_addr)
+            .await
+            .inspect_err(|err| error!("Failed to bind to {}: {}", bind_addr, err))?;
 
-    axum::serve(listener, app).await?;
+        info!("🌐 Web UI available at: http://{}", bind_addr);
+        info!(
+            "📊 API documentation available at: http://{}/api-docs",
+            bind_addr
+        );
+        info!(
+            "📋 OpenAPI specification at: http://{}/api-docs/openapi.json",
+            bind_addr
+        );
+        info!("Press Ctrl+C to stop the server");
+
+        axum::serve(listener, app).await?;
+    }
 
     Ok(())
 }

@@ -776,6 +776,9 @@ async fn test_swagger_ui_integration() {
         ssh_timeout_seconds: 30,
         use_ssh_agent: Some(true),
         state_directory: None,
+        tls_cert_file: None,
+        tls_key_file: None,
+        tls_hostname: None,
     };
 
     let app_state = AppState {

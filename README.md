@@ -7,6 +7,7 @@ A Rust application for network device discovery and configuration parsing. Trail
 - **Automatic Device Discovery** - SSH into devices and identify brand/type automatically
 - **Configuration Parsing** - Parse network device configurations (supports MikroTik and Cisco)
 - **Web-based Topology Visualization** - Interactive network topology maps with D3.js
+- **HTTPS Support** - Secure web interface with TLS certificates (RSA and ECDSA including prime256v1/P-256)
 - **Device Filtering** - Filter devices by type with visual indicators on both topology and device list pages
 - **Path Finding** - Find network paths between devices and endpoints
 - **RESTful API** - Complete API with OpenAPI/Swagger documentation
@@ -104,10 +105,21 @@ SSH_PASSWORD=mypassword cargo run
 ### 3. Web Interface
 
 ```bash
-# Start the web server
-cargo run web
+# Start the web server (HTTP)
+cargo run -- web
 
-# Access at http://localhost:8080
+# Start with HTTPS using TLS certificates
+cargo run -- web --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem
+
+# Override hostname (if not using certificate hostname)
+cargo run -- web --tls-cert cert.pem --tls-key key.pem --tls-hostname example.com
+
+# Using environment variables
+export TRAILFINDER_TLS_CERT_FILE=/path/to/cert.pem
+export TRAILFINDER_TLS_KEY_FILE=/path/to/key.pem
+cargo run -- web
+
+# Access at http://localhost:8000 (HTTP) or https://hostname:8000 (HTTPS)
 # Available pages:
 # - /devices - Device inventory with filtering
 # - /topology - Interactive network topology
@@ -182,6 +194,51 @@ Set the `SSH_PASSWORD` environment variable for password-based auth (least secur
 
 - `ssh_timeout_seconds` - SSH connection timeout
 - `use_ssh_agent` - Whether to use ssh-agent globally (optional, defaults to true if omitted)
+
+### TLS/HTTPS Configuration
+
+Configure HTTPS for the web server using TLS certificates:
+
+#### Configuration File Options
+
+Add to your `devices.json`:
+
+```json
+{
+  "tls_cert_file": "/path/to/certificate.pem",
+  "tls_key_file": "/path/to/private-key.pem",
+  "tls_hostname": "optional-hostname-override"
+}
+```
+
+#### Command Line Options
+
+```bash
+# TLS certificate file
+cargo run -- web --tls-cert /path/to/cert.pem
+
+# TLS private key file
+cargo run -- web --tls-key /path/to/key.pem
+
+# Optional hostname override (extracted from certificate if not specified)
+cargo run -- web --tls-hostname example.com
+```
+
+#### Environment Variables
+
+```bash
+export TRAILFINDER_TLS_CERT_FILE=/path/to/cert.pem
+export TRAILFINDER_TLS_KEY_FILE=/path/to/key.pem
+export TRAILFINDER_TLS_HOSTNAME=example.com  # optional
+```
+
+#### Supported Key Formats
+
+- **RSA keys** (PKCS#1 and PKCS#8 formats)
+- **ECDSA keys** (SEC1 and PKCS#8 formats, including prime256v1/P-256)
+- **Automatic hostname extraction** from certificate Subject Alternative Names (SAN) or Common Name (CN)
+
+The server automatically detects the key format and extracts the hostname from the certificate if not explicitly provided.
 
 ## Architecture
 

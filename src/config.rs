@@ -166,6 +166,12 @@ pub struct AppConfig {
     pub use_ssh_agent: Option<bool>,
     /// Where we keep the device state files
     pub state_directory: Option<PathBuf>,
+    /// TLS certificate file path for HTTPS web server
+    pub tls_cert_file: Option<PathBuf>,
+    /// TLS private key file path for HTTPS web server
+    pub tls_key_file: Option<PathBuf>,
+    /// TLS hostname override (if not specified, extracted from certificate)
+    pub tls_hostname: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -175,6 +181,9 @@ impl Default for AppConfig {
             ssh_timeout_seconds: 30,
             use_ssh_agent: None, // Default to using ssh-agent when None
             state_directory: Some(PathBuf::from("states")),
+            tls_cert_file: None,
+            tls_key_file: None,
+            tls_hostname: None,
         }
     }
 }
@@ -299,6 +308,26 @@ impl AppConfig {
 
     pub fn use_ssh_agent(&self) -> bool {
         self.use_ssh_agent.unwrap_or(true) // Default to true
+    }
+
+    /// Check if TLS is configured (both cert and key files are provided)
+    pub fn is_tls_configured(&self) -> bool {
+        self.tls_cert_file.is_some() && self.tls_key_file.is_some()
+    }
+
+    /// Get TLS certificate file path
+    pub fn get_tls_cert_file(&self) -> Option<&Path> {
+        self.tls_cert_file.as_deref()
+    }
+
+    /// Get TLS key file path
+    pub fn get_tls_key_file(&self) -> Option<&Path> {
+        self.tls_key_file.as_deref()
+    }
+
+    /// Get TLS hostname (either explicit or will be extracted from certificate)
+    pub fn get_tls_hostname(&self) -> Option<&str> {
+        self.tls_hostname.as_deref()
     }
 
     pub fn get_hostname_by_id(&self, device_id: Uuid) -> Option<String> {

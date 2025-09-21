@@ -4,19 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Trailfinder is a Rust application for network device discovery and configuration parsing. The application can SSH into network devices, automatically identify their brand/type, parse their configurations, and maintain a JSON-based inventory. Currently implements MikroTik and Cisco parsers with comprehensive test coverage.
+Trailfinder is a Rust application for network device discovery and configuration parsing. The application can SSH into network devices, automatically identify their brand/type, parse their configurations, and maintain a JSON-based inventory. Features a comprehensive web interface with interactive topology visualization, HTTPS support, and RESTful API. Currently implements MikroTik, Cisco, and Ubiquiti parsers with comprehensive test coverage.
 
 ## Commands
 
 ### Building
 
 - `cargo build --quiet` - Build the project
-- `cargo run --quiet` - Run the main application
-- `cargo run --quiet -- web` - Run the web server
+- `cargo run --quiet` - Run the main application (device discovery)
+- `cargo run --quiet -- web` - Run the web server (HTTP on localhost:8000)
+- `cargo run --quiet -- web --tls-cert cert.pem --tls-key key.pem` - Run HTTPS web server
+- `cargo run --quiet -- web --help` - Show web server options including TLS configuration
 
 ### Testing
 
-- `cargo test --quiet` - Run all tests (173+ tests with comprehensive coverage)
+- `cargo test --quiet` - Run all tests (253+ tests with comprehensive coverage)
 - `cargo test --quiet test_parse_mikrotik` - Run specific test
 - `cargo test --quiet mikrotik` - Run all MikroTik parser tests
 - `cargo test --quiet cisco` - Run all Cisco parser tests
@@ -65,6 +67,20 @@ The codebase follows a standard Rust library + binary structure:
 
 - **src/brand/mikrotik.rs** - MikroTik-specific parser implementing `ConfParser`
 - **src/brand/cisco.rs** - Cisco-specific parser implementing `ConfParser`
+- **src/brand/ubiquiti.rs** - Ubiquiti-specific parser implementing `ConfParser`
+
+- **src/web/mod.rs** - Web server and API implementation:
+  - `web_server_command` - Main web server function with HTTP/HTTPS support
+  - REST API endpoints for devices, topology, and path finding
+  - OpenAPI/Swagger documentation generation
+  - TLS certificate parsing and hostname extraction
+  - HTTPS support with RSA and ECDSA keys (including prime256v1/P-256)
+
+- **src/cli.rs** - Command-line interface with comprehensive subcommands:
+  - Device discovery and identification commands
+  - Web server startup with TLS configuration options
+  - Add/remove device commands
+  - Path finding and scanning functionality
 
 ## Device Configuration
 
@@ -75,6 +91,10 @@ The application uses a `devices.json` file to store device inventory. Each devic
 - Authentication preferences (ssh-agent, identity files)
 - Brand and device type (auto-detected)
 - Last interrogation timestamp for caching
+- TLS configuration for HTTPS web server (optional):
+  - Certificate file path (`tls_cert_file`)
+  - Private key file path (`tls_key_file`)
+  - Hostname override (`tls_hostname`)
 
 ## SSH Authentication
 
@@ -92,16 +112,69 @@ The application supports multiple SSH authentication methods in priority order:
 
 The application tries SSH config first, then falls back to manual config if SSH config fails.
 
+## Web Interface
+
+The application includes a comprehensive web interface built with Axum and modern web technologies:
+
+### Core Features
+- **Interactive Topology Visualization** - D3.js-powered network maps with device relationships
+- **Device Inventory Management** - Searchable device lists with filtering by type
+- **Path Finding** - Network path discovery between devices and endpoints
+- **RESTful API** - Complete API with automatic OpenAPI/Swagger documentation
+
+### HTTPS/TLS Support
+- **Multiple Key Formats** - RSA (PKCS#1, PKCS#8) and ECDSA (SEC1, PKCS#8) including prime256v1/P-256
+- **Automatic Hostname Extraction** - Extracts hostnames from certificate SAN or CN fields
+- **Flexible Configuration** - CLI arguments, environment variables, or config file options
+- **Modern TLS** - Uses rustls with AWS-LC-RS crypto backend
+
+### Web Interface Pages
+- `/` - Homepage with navigation
+- `/devices` - Device inventory with type filtering and search
+- `/topology` - Interactive network topology visualization
+- `/pathfinder` - Network path discovery tool
+- `/api-docs` - OpenAPI/Swagger documentation
+- `/api-docs/openapi.json` - OpenAPI specification
+
+### API Endpoints
+- `GET /api/devices` - List all devices with optional filtering
+- `GET /api/devices/{id}` - Get specific device details
+- `GET /api/topology` - Get network topology data
+- `POST /api/pathfind` - Find paths between network endpoints
+
 ## Key Dependencies
 
+### Core Dependencies
 - `serde` - Serialization/deserialization with derive macros
 - `serde_json` - JSON configuration file support
-- `ssh2` - SSH client functionality for device connection
-- `ssh_config` - SSH config file parsing for authentication
-- `dirs` - Cross-platform home directory detection
-- `chrono` - Timestamp handling for identification caching  
+- `chrono` - Timestamp handling for identification caching
 - `uuid` - Unique device ID generation
-- `tokio` - Async runtime (for future async features)
+- `tokio` - Async runtime for web server and concurrent operations
+
+### SSH and Network
+- `russh` - SSH client functionality for device connection (replaces ssh2)
+- `russh-keys` - SSH key management and parsing
+- `ssh-agent` - SSH agent integration
+- `cidr` - CIDR network parsing and manipulation
+
+### Web Server and API
+- `axum` - Modern async web framework for HTTP server
+- `axum-server` - HTTPS/TLS support for axum with rustls
+- `tower-http` - HTTP middleware (static files, CORS, tracing)
+- `utoipa` - OpenAPI/Swagger documentation generation
+- `utoipa-swagger-ui` - Swagger UI integration
+- `askama` - Template engine for HTML rendering
+- `askama_web` - Axum integration for askama templates
+
+### TLS and Cryptography
+- `rustls` - Modern TLS implementation with AWS-LC-RS crypto
+- `rustls-pki-types` - TLS certificate and key type definitions with PEM parsing
+- `x509-parser` - X.509 certificate parsing for hostname extraction
+
+### CLI and Configuration
+- `clap` - Command-line argument parsing with derive macros
+- `dirs` - Cross-platform home directory detection
+- `shellexpand` - Shell-style path expansion (~/ support)
 
 ## Testing Data
 
@@ -113,10 +186,11 @@ The project includes sample MikroTik and Cisco system responses in `src/tests/` 
 
 The project maintains comprehensive test coverage across all major components:
 - **CLI Integration Tests** - 25+ tests covering command parsing, config validation, error handling
-- **SSH Client Tests** - 20+ tests covering connection management, authentication, device identification  
+- **SSH Client Tests** - 20+ tests covering connection management, authentication, device identification
 - **Core Library Tests** - 32+ tests covering data models, serialization, error handling
 - **Brand Parser Tests** - 43+ tests covering MikroTik (23) and Cisco (20) configuration parsing
-- **Total: 173+ tests** providing robust validation of network discovery functionality
+- **Web API Tests** - Tests covering REST endpoints, OpenAPI documentation, and web interface
+- **Total: 253+ tests** providing robust validation of network discovery and web interface functionality
 
 Test coverage includes:
 - Edge case handling and error conditions
@@ -124,6 +198,9 @@ Test coverage includes:
 - Network topology discovery and neighbor detection
 - Interface and routing table parsing
 - Device identification and classification
+- Web API endpoints and response formatting
+- TLS configuration and certificate parsing
+- HTTP/HTTPS server functionality
 
 ## Current Development Tasks
 

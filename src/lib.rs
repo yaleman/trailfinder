@@ -239,6 +239,7 @@ impl From<&str> for InterfaceType {
 #[derive(Debug)]
 pub enum TrailFinderError {
     BadRequest(String),
+    Crypto(String),
     Config(String),
     Generic(String),
     InvalidDestination(NetworkParseError),
@@ -309,6 +310,7 @@ impl std::fmt::Display for TrailFinderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TrailFinderError::BadRequest(error) => write!(f, "Bad request: {error}"),
+            TrailFinderError::Crypto(error) => write!(f, "Crypto error: {error}"),
             TrailFinderError::Parse(error) => write!(f, "Parse error: {error}"),
             TrailFinderError::InvalidLine(error) => write!(f, "Invalid line: {error}"),
             TrailFinderError::Regex(error) => write!(f, "Regex error: {error}"),

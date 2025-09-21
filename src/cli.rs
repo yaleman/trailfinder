@@ -182,6 +182,15 @@ enum Commands {
         /// Address to bind the web server to
         #[arg(short, long, default_value = "127.0.0.1")]
         address: String,
+        /// TLS certificate file path for HTTPS
+        #[arg(long, env = "TRAILFINDER_TLS_CERT_FILE")]
+        tls_cert: Option<String>,
+        /// TLS private key file path for HTTPS
+        #[arg(long, env = "TRAILFINDER_TLS_KEY_FILE")]
+        tls_key: Option<String>,
+        /// TLS hostname override (if not specified, extracted from certificate)
+        #[arg(long, env = "TRAILFINDER_TLS_HOSTNAME")]
+        tls_hostname: Option<String>,
     },
     /// Identify new devices that haven't been processed yet (default behavior)
     Identify {
@@ -375,12 +384,24 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             };
             add_command(&mut app_config, config_path, &params).await?;
         }
-        Commands::Web { port, address } => {
+        Commands::Web { port, address, tls_cert, tls_key, tls_hostname } => {
+            // Override config TLS settings with CLI arguments if provided
+            let mut web_config = app_config.clone();
+            if let Some(cert_path) = tls_cert {
+                web_config.tls_cert_file = Some(PathBuf::from(cert_path));
+            }
+            if let Some(key_path) = tls_key {
+                web_config.tls_key_file = Some(PathBuf::from(key_path));
+            }
+            if let Some(hostname) = tls_hostname {
+                web_config.tls_hostname = Some(hostname);
+            }
+
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
                     info!("Quitting...");
                 }
-                res = web_server_command(&app_config, &address, port) => {
+                res = web_server_command(&web_config, &address, port) => {
                     res.map_err(|err| Box::new(std::io::Error::other(err.to_string())))?;
                 }
             }
@@ -1426,7 +1447,7 @@ mod tests {
 
         let cli = cli.unwrap();
         match cli.command {
-            Commands::Web { port, address } => {
+            Commands::Web { port, address, .. } => {
                 assert_eq!(port, 8080);
                 assert_eq!(address, "0.0.0.0");
             }
@@ -1945,9 +1966,12 @@ mod tests {
         let web_cmd = Commands::Web {
             port: 8000,
             address: "127.0.0.1".to_string(),
+            tls_cert: None,
+            tls_key: None,
+            tls_hostname: None,
         };
         match web_cmd {
-            Commands::Web { port, address } => {
+            Commands::Web { port, address, .. } => {
                 assert_eq!(port, 8000);
                 assert_eq!(address, "127.0.0.1");
             }
