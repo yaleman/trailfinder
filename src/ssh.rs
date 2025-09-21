@@ -464,78 +464,89 @@ impl SshClient {
                 }
 
                 // Try each identity from the SSH agent using the Signer trait
-                // Limit to first 10 identities to prevent overwhelming the SSH agent
-                let max_identities = std::cmp::min(identities.len(), 10);
-                debug!("Attempting authentication with first {} of {} SSH agent identities", max_identities, identities.len());
+                // Process identities in batches of 5 to prevent overwhelming the SSH agent
+                const BATCH_SIZE: usize = 5;
+                debug!("Attempting authentication with {} SSH agent identities (processing {} at a time)", identities.len(), BATCH_SIZE);
 
-                for (i, public_key) in identities.into_iter().take(max_identities).enumerate() {
-                    debug!("Trying SSH agent identity {}/{}: type={:?}", i + 1, max_identities, public_key.algorithm());
+                for (batch_idx, batch) in identities.chunks(BATCH_SIZE).enumerate() {
+                    debug!("Processing batch {} of identities ({} total batches)", batch_idx + 1, (identities.len() + BATCH_SIZE - 1) / BATCH_SIZE);
 
-                    // Create a new agent client for each attempt since authenticate_publickey_with needs a mutable reference
-                    // Add a small delay between attempts to prevent overwhelming the SSH agent
-                    if i > 0 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    for (i, public_key) in batch.iter().enumerate() {
+                        let global_idx = batch_idx * BATCH_SIZE + i + 1;
+                        debug!("Trying SSH agent identity {}/{}: type={:?}", global_idx, identities.len(), public_key.algorithm());
+
+                        // Create a new agent client for each attempt since authenticate_publickey_with needs a mutable reference
+                        // Add a small delay between attempts to prevent overwhelming the SSH agent
+                        if i > 0 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        }
+
+                        let mut agent_signer = match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(5),
+                            AgentClient::connect_env()
+                        ).await {
+                            Ok(Ok(client)) => client,
+                            Ok(Err(e)) => {
+                                debug!("Failed to reconnect to SSH agent for identity {}: {}", global_idx, e);
+                                // If we can't connect to agent, break out of the batch entirely
+                                debug!("SSH agent connection failed, stopping current batch");
+                                break;
+                            }
+                            Err(_) => {
+                                debug!("SSH agent connection timed out for identity {}", global_idx);
+                                debug!("SSH agent connection timeout, stopping current batch");
+                                break;
+                            }
+                        };
+
+                        // Use the AgentClient as a Signer with russh's authenticate_publickey_with
+                        let auth_result = match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(10),
+                            session.authenticate_publickey_with(
+                                &self.connection_info.username,
+                                public_key.clone(),
+                                None, // hash_alg - let russh choose the appropriate hash algorithm
+                                &mut agent_signer,
+                            )
+                        ).await {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(e)) => {
+                                let error_msg = e.to_string();
+                                debug!("SSH agent identity {} authentication failed: {}", global_idx, error_msg);
+
+                                // If we get event loop errors, add a longer delay before continuing
+                                if error_msg.contains("Could not reach the event loop") || error_msg.contains("event loop") {
+                                    debug!("Event loop error detected, adding delay before next attempt");
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                }
+                                continue;
+                            }
+                            Err(_) => {
+                                debug!("SSH agent identity {} authentication timed out", global_idx);
+                                continue;
+                            }
+                        };
+
+                        match auth_result {
+                            client::AuthResult::Success => {
+                                debug!("✅ SSH agent authentication successful with identity {}", global_idx);
+                                return Ok(true);
+                            }
+                            client::AuthResult::Failure { partial_success: true, .. } => {
+                                debug!("SSH agent authentication partial success with identity {} - additional auth required", global_idx);
+                                continue;
+                            }
+                            client::AuthResult::Failure { partial_success: false, .. } => {
+                                debug!("SSH agent authentication failed with identity {}", global_idx);
+                                continue;
+                            }
+                        }
                     }
 
-                    let mut agent_signer = match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(5),
-                        AgentClient::connect_env()
-                    ).await {
-                        Ok(Ok(client)) => client,
-                        Ok(Err(e)) => {
-                            debug!("Failed to reconnect to SSH agent for identity {}: {}", i + 1, e);
-                            // If we can't connect to agent, break out of the loop entirely
-                            debug!("SSH agent connection failed, stopping agent authentication attempts");
-                            break;
-                        }
-                        Err(_) => {
-                            debug!("SSH agent connection timed out for identity {}", i + 1);
-                            debug!("SSH agent connection timeout, stopping agent authentication attempts");
-                            break;
-                        }
-                    };
-
-                    // Use the AgentClient as a Signer with russh's authenticate_publickey_with
-                    let auth_result = match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        session.authenticate_publickey_with(
-                            &self.connection_info.username,
-                            public_key.clone(),
-                            None, // hash_alg - let russh choose the appropriate hash algorithm
-                            &mut agent_signer,
-                        )
-                    ).await {
-                        Ok(Ok(result)) => result,
-                        Ok(Err(e)) => {
-                            let error_msg = e.to_string();
-                            debug!("SSH agent identity {} authentication failed: {}", i + 1, error_msg);
-
-                            // If we get event loop errors, add a longer delay before continuing
-                            if error_msg.contains("Could not reach the event loop") || error_msg.contains("event loop") {
-                                debug!("Event loop error detected, adding delay before next attempt");
-                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                            }
-                            continue;
-                        }
-                        Err(_) => {
-                            debug!("SSH agent identity {} authentication timed out", i + 1);
-                            continue;
-                        }
-                    };
-
-                    match auth_result {
-                        client::AuthResult::Success => {
-                            debug!("✅ SSH agent authentication successful with identity {}", i + 1);
-                            return Ok(true);
-                        }
-                        client::AuthResult::Failure { partial_success: true, .. } => {
-                            debug!("SSH agent authentication partial success with identity {} - additional auth required", i + 1);
-                            continue;
-                        }
-                        client::AuthResult::Failure { partial_success: false, .. } => {
-                            debug!("SSH agent authentication failed with identity {}", i + 1);
-                            continue;
-                        }
+                    // Add delay between batches to prevent overwhelming the SSH agent
+                    if batch_idx < (identities.len() + BATCH_SIZE - 1) / BATCH_SIZE - 1 {
+                        debug!("Batch {} completed, waiting before next batch", batch_idx + 1);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                 }
 
