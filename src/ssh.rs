@@ -464,31 +464,61 @@ impl SshClient {
                 }
 
                 // Try each identity from the SSH agent using the Signer trait
-                for (i, public_key) in identities.into_iter().enumerate() {
-                    debug!("Trying SSH agent identity {}: type={:?}", i + 1, public_key.algorithm());
+                // Limit to first 10 identities to prevent overwhelming the SSH agent
+                let max_identities = std::cmp::min(identities.len(), 10);
+                debug!("Attempting authentication with first {} of {} SSH agent identities", max_identities, identities.len());
+
+                for (i, public_key) in identities.into_iter().take(max_identities).enumerate() {
+                    debug!("Trying SSH agent identity {}/{}: type={:?}", i + 1, max_identities, public_key.algorithm());
 
                     // Create a new agent client for each attempt since authenticate_publickey_with needs a mutable reference
-                    let mut agent_signer = match AgentClient::connect_env().await {
-                        Ok(client) => client,
-                        Err(e) => {
+                    // Add a small delay between attempts to prevent overwhelming the SSH agent
+                    if i > 0 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    }
+
+                    let mut agent_signer = match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(5),
+                        AgentClient::connect_env()
+                    ).await {
+                        Ok(Ok(client)) => client,
+                        Ok(Err(e)) => {
                             debug!("Failed to reconnect to SSH agent for identity {}: {}", i + 1, e);
-                            continue;
+                            // If we can't connect to agent, break out of the loop entirely
+                            debug!("SSH agent connection failed, stopping agent authentication attempts");
+                            break;
+                        }
+                        Err(_) => {
+                            debug!("SSH agent connection timed out for identity {}", i + 1);
+                            debug!("SSH agent connection timeout, stopping agent authentication attempts");
+                            break;
                         }
                     };
 
                     // Use the AgentClient as a Signer with russh's authenticate_publickey_with
-                    let auth_result = match session
-                        .authenticate_publickey_with(
+                    let auth_result = match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(10),
+                        session.authenticate_publickey_with(
                             &self.connection_info.username,
                             public_key.clone(),
                             None, // hash_alg - let russh choose the appropriate hash algorithm
                             &mut agent_signer,
                         )
-                        .await
-                    {
-                        Ok(result) => result,
-                        Err(e) => {
-                            debug!("SSH agent identity {} authentication failed: {}", i + 1, e);
+                    ).await {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(e)) => {
+                            let error_msg = e.to_string();
+                            debug!("SSH agent identity {} authentication failed: {}", i + 1, error_msg);
+
+                            // If we get event loop errors, add a longer delay before continuing
+                            if error_msg.contains("Could not reach the event loop") || error_msg.contains("event loop") {
+                                debug!("Event loop error detected, adding delay before next attempt");
+                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            }
+                            continue;
+                        }
+                        Err(_) => {
+                            debug!("SSH agent identity {} authentication timed out", i + 1);
                             continue;
                         }
                     };
