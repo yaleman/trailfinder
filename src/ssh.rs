@@ -1,4 +1,5 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::io::{Read, Write};
 
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
@@ -63,6 +64,122 @@ impl From<TrailFinderError> for SshError {
         SshError::Cache(format!("Cache error: {}", err))
     }
 }
+
+/// Basic SSH agent protocol constants
+const SSH_AGENT_REQUEST_IDENTITIES: u8 = 11;
+const SSH_AGENT_IDENTITIES_ANSWER: u8 = 12;
+
+/// Simple SSH agent client for listing identities
+struct SimpleAgentClient {
+    stream: std::os::unix::net::UnixStream,
+}
+
+impl SimpleAgentClient {
+    fn connect(socket_path: &str) -> Result<Self, SshError> {
+        let stream = std::os::unix::net::UnixStream::connect(socket_path)
+            .map_err(|e| SshError::Connection(format!("Failed to connect to SSH agent: {}", e)))?;
+
+        Ok(SimpleAgentClient { stream })
+    }
+
+    fn request_identities(&mut self) -> Result<Vec<AgentIdentity>, SshError> {
+        // Send SSH_AGENT_REQUEST_IDENTITIES
+        let request = [0, 0, 0, 1, SSH_AGENT_REQUEST_IDENTITIES];
+        self.stream.write_all(&request)
+            .map_err(|e| SshError::Connection(format!("Failed to write to SSH agent: {}", e)))?;
+
+        // Read response length (4 bytes)
+        let mut len_buf = [0u8; 4];
+        self.stream.read_exact(&mut len_buf)
+            .map_err(|e| SshError::Connection(format!("Failed to read response length: {}", e)))?;
+
+        let response_len = u32::from_be_bytes(len_buf) as usize;
+        if response_len > 1024 * 1024 { // 1MB safety limit
+            return Err(SshError::Connection("SSH agent response too large".to_string()));
+        }
+
+        // Read response data
+        let mut response = vec![0u8; response_len];
+        self.stream.read_exact(&mut response)
+            .map_err(|e| SshError::Connection(format!("Failed to read response data: {}", e)))?;
+
+        // Parse response
+        if response.is_empty() || response[0] != SSH_AGENT_IDENTITIES_ANSWER {
+            return Err(SshError::Authentication("Invalid SSH agent response".to_string()));
+        }
+
+        // Parse number of identities (4 bytes at offset 1)
+        if response.len() < 5 {
+            return Err(SshError::Authentication("SSH agent response too short".to_string()));
+        }
+
+        let num_identities = u32::from_be_bytes([
+            response[1], response[2], response[3], response[4]
+        ]) as usize;
+
+        debug!("SSH agent reports {} identities", num_identities);
+
+        let mut identities = Vec::new();
+        let mut offset = 5;
+
+        for i in 0..num_identities {
+            if offset + 4 > response.len() {
+                debug!("Insufficient data for identity {} key length", i);
+                break;
+            }
+
+            // Read key blob length
+            let key_len = u32::from_be_bytes([
+                response[offset], response[offset + 1],
+                response[offset + 2], response[offset + 3]
+            ]) as usize;
+            offset += 4;
+
+            if offset + key_len > response.len() {
+                debug!("Insufficient data for identity {} key blob", i);
+                break;
+            }
+
+            // Extract key blob
+            let key_blob = response[offset..offset + key_len].to_vec();
+            offset += key_len;
+
+            if offset + 4 > response.len() {
+                debug!("Insufficient data for identity {} comment length", i);
+                break;
+            }
+
+            // Read comment length
+            let comment_len = u32::from_be_bytes([
+                response[offset], response[offset + 1],
+                response[offset + 2], response[offset + 3]
+            ]) as usize;
+            offset += 4;
+
+            if offset + comment_len > response.len() {
+                debug!("Insufficient data for identity {} comment", i);
+                break;
+            }
+
+            // Extract comment
+            let comment = String::from_utf8_lossy(&response[offset..offset + comment_len]).to_string();
+            offset += comment_len;
+
+            identities.push(AgentIdentity { key_blob, comment });
+        }
+
+        Ok(identities)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AgentIdentity {
+    key_blob: Vec<u8>,
+    comment: String,
+}
+
+
+
 
 // Handler for russh client
 #[derive(Clone)]
@@ -415,10 +532,80 @@ impl SshClient {
     ) -> Result<bool, SshError> {
         match auth_method {
             AuthMethod::SshAgent => {
-                debug!("SSH agent authentication is not yet fully implemented");
-                // debug!("To use your encrypted key, please convert it to OpenSSH format:");
-                // debug!("  ssh-keygen -p -m OpenSSH -f ~/.ssh/your_key_file");
-                // debug!("Or use an unencrypted key temporarily");
+                debug!("Attempting SSH agent authentication");
+
+                // Check if SSH_AUTH_SOCK is set (indicates SSH agent is available)
+                let ssh_auth_sock = match std::env::var("SSH_AUTH_SOCK") {
+                    Ok(sock) => sock,
+                    Err(_) => {
+                        debug!("SSH_AUTH_SOCK environment variable not set - SSH agent not available");
+                        return Ok(false);
+                    }
+                };
+
+                debug!("SSH agent socket found at: {}", ssh_auth_sock);
+
+                // Connect to SSH agent and enumerate keys
+                let mut agent_client = match SimpleAgentClient::connect(&ssh_auth_sock) {
+                    Ok(client) => {
+                        debug!("✅ Successfully connected to SSH agent socket");
+                        client
+                    }
+                    Err(e) => {
+                        debug!("Failed to connect to SSH agent socket {}: {}", ssh_auth_sock, e);
+                        debug!("SSH agent may not be running or socket is inaccessible");
+                        return Ok(false);
+                    }
+                };
+
+                // Get identities from SSH agent
+                let identities = match agent_client.request_identities() {
+                    Ok(identities) => {
+                        debug!("SSH agent returned {} identities", identities.len());
+                        identities
+                    }
+                    Err(e) => {
+                        debug!("Failed to get identities from SSH agent: {}", e);
+                        return Ok(false);
+                    }
+                };
+
+                if identities.is_empty() {
+                    debug!("SSH agent has no identities loaded");
+                    debug!("💡 Add keys to SSH agent with: ssh-add ~/.ssh/your_key");
+                    return Ok(false);
+                }
+
+                // Try each identity from the SSH agent
+                for (i, identity) in identities.iter().enumerate() {
+                    debug!("Trying SSH agent identity {}: '{}'", i + 1, identity.comment);
+
+                    // Try to parse the public key from the key blob
+                    let public_key = match ssh_key::PublicKey::from_bytes(&identity.key_blob) {
+                        Ok(key) => key,
+                        Err(e) => {
+                            debug!("Failed to parse public key from SSH agent identity: {}", e);
+                            continue;
+                        }
+                    };
+
+                    // For SSH agent keys, we can't directly create a PrivateKey without the private material
+                    // The proper approach would be to implement SSH agent signing protocol
+                    // For now, try to use the public key to see if russh can work with it
+                    debug!("Successfully parsed public key for identity: {}", identity.comment);
+                    debug!("Key type: {:?}", public_key.algorithm());
+
+                    // Since we can't easily use agent keys directly with russh without implementing
+                    // the full signing protocol, log the available keys and provide guidance
+                    debug!("SSH agent key detected but requires signing protocol implementation");
+                }
+
+                debug!("Found {} SSH agent identities but cannot use them directly with russh", identities.len());
+                debug!("💡 To use these keys:");
+                debug!("  1. Find the corresponding key files (usually in ~/.ssh/)");
+                debug!("  2. Add them to SSH config or device config as IdentityFile entries");
+                debug!("  3. The same keys work for both agent and file-based auth");
+
                 Ok(false)
             }
             AuthMethod::KeyFile { path, passphrase } => {
