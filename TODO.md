@@ -18,7 +18,7 @@
 ### High Priority (Core Functionality)
 
 #### Architecture & Modularity
-- [ ] Extract core domain models into separate crate for better reusability
+
 - [ ] Implement dependency injection pattern for better testability and modularity
 - [ ] Add service layer to encapsulate business logic and reduce coupling between web/CLI layers
 - [ ] Separate network discovery into distinct service with pluggable discovery strategies
