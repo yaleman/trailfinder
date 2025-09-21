@@ -469,7 +469,7 @@ impl SshClient {
                 debug!("Attempting authentication with {} SSH agent identities (processing {} at a time)", identities.len(), BATCH_SIZE);
 
                 for (batch_idx, batch) in identities.chunks(BATCH_SIZE).enumerate() {
-                    debug!("Processing batch {} of identities ({} total batches)", batch_idx + 1, (identities.len() + BATCH_SIZE - 1) / BATCH_SIZE);
+                    debug!("Processing batch {} of identities ({} total batches)", batch_idx + 1, identities.len().div_ceil(BATCH_SIZE));
 
                     for (i, public_key) in batch.iter().enumerate() {
                         let global_idx = batch_idx * BATCH_SIZE + i + 1;
@@ -544,7 +544,7 @@ impl SshClient {
                     }
 
                     // Add delay between batches to prevent overwhelming the SSH agent
-                    if batch_idx < (identities.len() + BATCH_SIZE - 1) / BATCH_SIZE - 1 {
+                    if batch_idx < identities.len().div_ceil(BATCH_SIZE) - 1 {
                         debug!("Batch {} completed, waiting before next batch", batch_idx + 1);
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
