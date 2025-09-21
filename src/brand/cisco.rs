@@ -431,6 +431,18 @@ impl DeviceHandler for Cisco {
         "show cdp neighbors".to_string()
     }
 
+    fn get_lldp_command(&self) -> String {
+        "show lldp neighbors detail".to_string()
+    }
+
+    fn parse_lldp(
+        &mut self,
+        input_data: &str,
+        _devices: Vec<Device>,
+    ) -> Result<usize, TrailFinderError> {
+        self.store_raw_lldp_data(input_data)
+    }
+
     fn get_interfaces_command(&self) -> String {
         "show interfaces".to_string()
     }
@@ -479,6 +491,24 @@ impl DeviceHandler for Cisco {
 
             // Store raw CDP data in interfaces for later global processing
             parser.store_raw_cdp_data(&cdp_output)?;
+
+            // Get LLDP data (new)
+            if self.supports_lldp() {
+                match ssh_client.execute_command(&self.get_lldp_command()).await {
+                    Ok(lldp_output) => {
+                        if !lldp_output.trim().is_empty() {
+                            debug!("Collected LLDP data for {}", device_config.hostname);
+                            parser.parse_lldp(&lldp_output, vec![])?;
+                        } else {
+                            debug!("No LLDP neighbors found for {}", device_config.hostname);
+                        }
+                    }
+                    Err(e) => {
+                        debug!("LLDP not available on {}: {}", device_config.hostname, e);
+                        // Non-fatal error - LLDP might not be enabled
+                    }
+                }
+            }
 
             parser.parse_identity(&hostname_output)?;
             parser.parse_ip_addresses(&ssh_client.execute_command(Self::GET_IP_COMMAND).await?)?;
@@ -706,6 +736,238 @@ impl Cisco {
             local_interface, device_id
         );
         Ok(None)
+    }
+
+    /// Store raw LLDP neighbor data in interfaces for later global processing
+    pub fn store_raw_lldp_data(&mut self, input_data: &str) -> Result<usize, TrailFinderError> {
+        debug!("Storing raw LLDP data: {}", input_data);
+
+        let mut mods_made = 0;
+        let mut current_neighbor = LldpNeighborData::new();
+        let mut processing_neighbor = false;
+
+        for line in input_data.lines() {
+            let line = line.trim();
+
+            // Detect start of new neighbor block
+            if line.starts_with("------") {
+                // Process previous neighbor if exists
+                if processing_neighbor && !current_neighbor.local_interface.is_empty() {
+                    mods_made += self.store_lldp_neighbor_for_interface(&current_neighbor)?;
+                }
+
+                current_neighbor = LldpNeighborData::new();
+                processing_neighbor = true;
+                continue;
+            }
+
+            if processing_neighbor {
+                self.parse_lldp_field(&mut current_neighbor, line)?;
+            }
+        }
+
+        // Process final neighbor
+        if processing_neighbor && !current_neighbor.local_interface.is_empty() {
+            mods_made += self.store_lldp_neighbor_for_interface(&current_neighbor)?;
+        }
+
+        Ok(mods_made)
+    }
+
+    /// Parse individual LLDP fields from output lines
+    fn parse_lldp_field(&self, neighbor: &mut LldpNeighborData, line: &str) -> Result<(), TrailFinderError> {
+        if let Some(value) = line.strip_prefix("Local Intf:") {
+            neighbor.local_interface = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("Chassis id:") {
+            neighbor.chassis_id = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("Port id:") {
+            neighbor.port_id = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("System Name:") {
+            let value = value.trim();
+            if !value.is_empty() && value != "not advertised" {
+                neighbor.system_name = Some(value.to_string());
+            }
+        } else if let Some(value) = line.strip_prefix("System Description:") {
+            let value = value.trim();
+            if !value.is_empty() && value != "not advertised" {
+                neighbor.system_description = Some(value.to_string());
+            }
+        } else if line.contains("Management Addresses:") {
+            // Management IP will be on next line(s)
+            neighbor.expect_management_ip = true;
+        } else if neighbor.expect_management_ip && line.trim().starts_with("IP:") {
+            if let Some(ip) = line.trim().strip_prefix("IP:") {
+                neighbor.management_ip = Some(ip.trim().to_string());
+                neighbor.expect_management_ip = false;
+            }
+        } else if let Some(value) = line.strip_prefix("Enabled Capabilities:") {
+            neighbor.capabilities = self.parse_capabilities(value)?;
+        } else if let Some(value) = line.strip_prefix("Time remaining:") {
+            neighbor.ttl = self.parse_ttl(value)?;
+        }
+
+        Ok(())
+    }
+
+    /// Parse capabilities string into vector
+    fn parse_capabilities(&self, capabilities_str: &str) -> Result<Vec<String>, TrailFinderError> {
+        let caps_str = capabilities_str.trim();
+        if caps_str.is_empty() || caps_str == "not advertised" {
+            return Ok(Vec::new());
+        }
+
+        let capabilities = caps_str.split(',')
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+
+        Ok(capabilities)
+    }
+
+    /// Parse TTL value from time remaining string
+    fn parse_ttl(&self, ttl_str: &str) -> Result<Option<u32>, TrailFinderError> {
+        let ttl_str = ttl_str.trim();
+        if ttl_str.is_empty() || ttl_str == "not advertised" {
+            return Ok(None);
+        }
+
+        // Extract number from "120 seconds" format
+        if let Some(num_str) = ttl_str.split_whitespace().next()
+            && let Ok(ttl) = num_str.parse::<u32>()
+        {
+            return Ok(Some(ttl));
+        }
+
+        Ok(None)
+    }
+
+    /// Associate LLDP neighbor data with appropriate interface
+    fn store_lldp_neighbor_for_interface(&mut self, neighbor: &LldpNeighborData) -> Result<usize, TrailFinderError> {
+        if neighbor.local_interface.is_empty() {
+            return Ok(0);
+        }
+
+        // Try multiple interface name variations
+        let interface_candidates = self.generate_interface_candidates(&neighbor.local_interface);
+
+        for candidate in interface_candidates {
+            // Find interface index first to avoid borrowing issues
+            let interface_index = self.interfaces
+                .iter()
+                .position(|iface| self.interface_name_matches(&iface.name, &candidate));
+
+            if let Some(index) = interface_index {
+                let existing_interface = &mut self.interfaces[index];
+                let neighbor_key = format!("lldp_{}", neighbor.chassis_id);
+                let neighbor_data = neighbor.to_string();
+
+                if existing_interface.neighbour_string_data.get(&neighbor_key) != Some(&neighbor_data) {
+                    existing_interface.neighbour_string_data.insert(neighbor_key, neighbor_data);
+                    debug!("Stored LLDP neighbor for interface {}: {}", candidate, neighbor.system_name.as_deref().unwrap_or("unknown"));
+                    return Ok(1);
+                }
+                return Ok(0);
+            }
+        }
+
+        debug!("Interface {} not found for LLDP neighbor", neighbor.local_interface);
+        Ok(0)
+    }
+
+    /// Generate interface name candidates for matching
+    fn generate_interface_candidates(&self, interface_name: &str) -> Vec<String> {
+        vec![
+            interface_name.to_string(),
+            interface_name.replace("Gi", "GigabitEthernet"),
+            interface_name.replace("Fa", "FastEthernet"),
+            interface_name.replace("Te", "TenGigabitEthernet"),
+            interface_name.replace("Ten", "TenGigabitEthernet"),
+            // Add space variations
+            interface_name.replace("Gig ", "GigabitEthernet"),
+            interface_name.replace("Fa ", "FastEthernet"),
+            interface_name.replace("Te ", "TenGigabitEthernet"),
+            interface_name.replace("Ten ", "TenGigabitEthernet"),
+        ]
+    }
+
+    /// Check if interface names match
+    fn interface_name_matches(&self, existing_name: &str, candidate: &str) -> bool {
+        if existing_name == candidate {
+            return true;
+        }
+
+        // Handle abbreviated forms
+        let normalized_existing = self.normalize_interface_name(existing_name);
+        let normalized_candidate = self.normalize_interface_name(candidate);
+
+        normalized_existing == normalized_candidate
+    }
+
+    /// Normalize interface name to full form for comparison
+    fn normalize_interface_name(&self, name: &str) -> String {
+        let name = name.replace("Gig ", "GigabitEthernet")
+            .replace("Gi", "GigabitEthernet")
+            .replace("Fa ", "FastEthernet")
+            .replace("Fa", "FastEthernet")
+            .replace("Te ", "TenGigabitEthernet")
+            .replace("Ten ", "TenGigabitEthernet")
+            .replace("Ten", "TenGigabitEthernet");
+
+        // Fix double replacements (e.g., GigabitEthernetgabitEthernet -> GigabitEthernet)
+        name.replace("GigabitEthernetgabitEthernet", "GigabitEthernet")
+            .replace("FastEthernetstEthernet", "FastEthernet")
+            .replace("TenGigabitEthernetGigabitEthernet", "TenGigabitEthernet")
+    }
+}
+
+/// LLDP neighbor data structure for parsing
+#[derive(Debug, Clone, Default)]
+struct LldpNeighborData {
+    local_interface: String,
+    chassis_id: String,
+    port_id: String,
+    system_name: Option<String>,
+    system_description: Option<String>,
+    management_ip: Option<String>,
+    capabilities: Vec<String>,
+    ttl: Option<u32>,
+    expect_management_ip: bool,
+}
+
+impl LldpNeighborData {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Display for LldpNeighborData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut lines = Vec::new();
+        lines.push(format!("Local Intf: {}", self.local_interface));
+        lines.push(format!("Chassis id: {}", self.chassis_id));
+        lines.push(format!("Port id: {}", self.port_id));
+
+        if let Some(ref name) = self.system_name {
+            lines.push(format!("System Name: {}", name));
+        }
+
+        if let Some(ref desc) = self.system_description {
+            lines.push(format!("System Description: {}", desc));
+        }
+
+        if let Some(ref ip) = self.management_ip {
+            lines.push(format!("Management Addresses:\n  IP: {}", ip));
+        }
+
+        if !self.capabilities.is_empty() {
+            lines.push(format!("Enabled Capabilities: {}", self.capabilities.join(",")));
+        }
+
+        if let Some(ttl) = self.ttl {
+            lines.push(format!("Time remaining: {} seconds", ttl));
+        }
+
+        write!(f, "{}", lines.join("\n"))
     }
 }
 
@@ -1345,5 +1607,168 @@ Vlan999 is down, line protocol is down"#;
                 );
             }
         }
+    }
+
+    // LLDP Tests
+    #[test]
+    fn test_cisco_lldp_command() {
+        let device = Cisco::test_device();
+        assert_eq!(device.get_lldp_command(), "show lldp neighbors detail");
+        assert!(device.supports_lldp());
+    }
+
+    #[test]
+    fn test_lldp_data_parsing() {
+        setup_test_logging();
+        let mut device = Cisco::test_device();
+
+        // Add test interfaces
+        device.interfaces.push(Interface::new(
+            Uuid::new_v4(),
+            "GigabitEthernet1/0/1".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        ));
+        device.interfaces.push(Interface::new(
+            Uuid::new_v4(),
+            "GigabitEthernet1/0/2".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        ));
+        device.interfaces.push(Interface::new(
+            Uuid::new_v4(),
+            "TenGigabitEthernet1/1/3".to_string(),
+            vec![],
+            vec![],
+            InterfaceType::Ethernet,
+            None,
+        ));
+
+        let lldp_data = std::fs::read_to_string("src/tests/cisco_lldp_neighbors.txt")
+            .expect("Failed to read LLDP test data");
+
+        let result = device.parse_lldp(&lldp_data, vec![]);
+        assert!(result.is_ok(), "LLDP parsing should succeed");
+
+        let changes = result.unwrap();
+        assert!(changes > 0, "Should have processed LLDP neighbors");
+
+        // Verify neighbor data was stored
+        let found_neighbors = device.interfaces.iter()
+            .filter(|iface| !iface.neighbour_string_data.is_empty())
+            .count();
+        assert!(found_neighbors > 0, "Should have stored neighbor data in interfaces");
+    }
+
+    #[test]
+    fn test_lldp_field_parsing() {
+        let device = Cisco::test_device();
+        let mut neighbor = LldpNeighborData::new();
+
+        // Test parsing individual fields
+        device.parse_lldp_field(&mut neighbor, "Local Intf: Gi1/0/1").unwrap();
+        assert_eq!(neighbor.local_interface, "Gi1/0/1");
+
+        device.parse_lldp_field(&mut neighbor, "System Name: CORE-SW-01").unwrap();
+        assert_eq!(neighbor.system_name, Some("CORE-SW-01".to_string()));
+
+        device.parse_lldp_field(&mut neighbor, "Port id: Gi2/0/1").unwrap();
+        assert_eq!(neighbor.port_id, "Gi2/0/1");
+
+        device.parse_lldp_field(&mut neighbor, "Chassis id: a0:23:9f:2b:b3:3f").unwrap();
+        assert_eq!(neighbor.chassis_id, "a0:23:9f:2b:b3:3f");
+
+        device.parse_lldp_field(&mut neighbor, "System Description: Cisco IOS Software").unwrap();
+        assert_eq!(neighbor.system_description, Some("Cisco IOS Software".to_string()));
+
+        device.parse_lldp_field(&mut neighbor, "Enabled Capabilities: B,R").unwrap();
+        assert_eq!(neighbor.capabilities, vec!["B", "R"]);
+
+        device.parse_lldp_field(&mut neighbor, "Time remaining: 120 seconds").unwrap();
+        assert_eq!(neighbor.ttl, Some(120));
+    }
+
+    #[test]
+    fn test_lldp_capabilities_parsing() {
+        let device = Cisco::test_device();
+
+        let caps = device.parse_capabilities("B,R").unwrap();
+        assert_eq!(caps, vec!["B", "R"]);
+
+        let caps = device.parse_capabilities("B, R, T").unwrap();
+        assert_eq!(caps, vec!["B", "R", "T"]);
+
+        let caps = device.parse_capabilities("not advertised").unwrap();
+        assert!(caps.is_empty());
+
+        let caps = device.parse_capabilities("").unwrap();
+        assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn test_lldp_ttl_parsing() {
+        let device = Cisco::test_device();
+
+        let ttl = device.parse_ttl("120 seconds").unwrap();
+        assert_eq!(ttl, Some(120));
+
+        let ttl = device.parse_ttl("95 seconds").unwrap();
+        assert_eq!(ttl, Some(95));
+
+        let ttl = device.parse_ttl("not advertised").unwrap();
+        assert_eq!(ttl, None);
+
+        let ttl = device.parse_ttl("").unwrap();
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn test_lldp_interface_candidates() {
+        let device = Cisco::test_device();
+
+        let candidates = device.generate_interface_candidates("Gi1/0/1");
+        assert!(candidates.contains(&"Gi1/0/1".to_string()));
+        assert!(candidates.contains(&"GigabitEthernet1/0/1".to_string()));
+
+        let candidates = device.generate_interface_candidates("Fa0/1");
+        assert!(candidates.contains(&"Fa0/1".to_string()));
+        assert!(candidates.contains(&"FastEthernet0/1".to_string()));
+
+        let candidates = device.generate_interface_candidates("Ten1/1/3");
+        assert!(candidates.contains(&"Ten1/1/3".to_string()));
+        assert!(candidates.contains(&"TenGigabitEthernet1/1/3".to_string()));
+    }
+
+    #[test]
+    fn test_interface_name_matching() {
+        let device = Cisco::test_device();
+
+        assert!(device.interface_name_matches("GigabitEthernet1/0/1", "Gi1/0/1"));
+        assert!(device.interface_name_matches("Gi1/0/1", "GigabitEthernet1/0/1"));
+        assert!(device.interface_name_matches("FastEthernet0/1", "Fa0/1"));
+        assert!(!device.interface_name_matches("GigabitEthernet1/0/1", "Fa0/1"));
+    }
+
+    #[test]
+    fn test_lldp_neighbor_data_to_string() {
+        let mut neighbor = LldpNeighborData::new();
+        neighbor.local_interface = "Gi1/0/1".to_string();
+        neighbor.chassis_id = "a0:23:9f:2b:b3:3f".to_string();
+        neighbor.port_id = "Gi2/0/1".to_string();
+        neighbor.system_name = Some("CORE-SW-01".to_string());
+        neighbor.management_ip = Some("10.0.99.2".to_string());
+        neighbor.capabilities = vec!["B".to_string(), "R".to_string()];
+        neighbor.ttl = Some(120);
+
+        let output = neighbor.to_string();
+        assert!(output.contains("Local Intf: Gi1/0/1"));
+        assert!(output.contains("System Name: CORE-SW-01"));
+        assert!(output.contains("IP: 10.0.99.2"));
+        assert!(output.contains("Enabled Capabilities: B,R"));
+        assert!(output.contains("Time remaining: 120 seconds"));
     }
 }

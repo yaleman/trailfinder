@@ -4,3 +4,4 @@ devices.json
 tarpaulin-report.*
 openapi.json
 .playwright-mcp/
+.envrc

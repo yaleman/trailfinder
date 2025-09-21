@@ -1,0 +1,53 @@
+------------------------------------------------
+Local Intf: Gi1/0/1
+Chassis id: a0:23:9f:2b:b3:3f
+Port id: Gi2/0/1
+Port Description: GigabitEthernet2/0/1
+System Name: CORE-SW-01
+System Description: Cisco IOS Software, IOS-XE Software, Catalyst L3 Switch Software (CAT3K_CAA-UNIVERSALK9-M), Version 16.12.11, RELEASE SOFTWARE (fc2)
+Technical Support: http://www.cisco.com/techsupport
+Copyright (c) 1986-2024 by Cisco Systems, Inc.
+Compiled Sun 31-Mar-24 12:30
+Time remaining: 107 seconds
+System Capabilities: B,R
+Enabled Capabilities: B,R
+Management Addresses:
+  IP: 10.0.99.2
+Auto Negotiation - supported, enabled
+Physical media capabilities:
+  1000baseT(FD)
+  100base-TX(FD)
+  100base-TX(HD)
+  10base-T(FD)
+  10base-T(HD)
+Media Attachment Unit type: 30
+Vlan ID: 1
+
+------------------------------------------------
+Local Intf: Gi1/0/2
+Chassis id: 00:11:22:33:44:55
+Port id: Fa0/1
+Port Description: FastEthernet0/1
+System Name: ACCESS-SW-02
+System Description: Cisco Catalyst 2960 Series Switch
+Time remaining: 95 seconds
+System Capabilities: B
+Enabled Capabilities: B
+Management Addresses:
+  IP: 10.0.99.10
+Auto Negotiation - supported, enabled
+Vlan ID: 100
+
+------------------------------------------------
+Local Intf: Ten1/1/3
+Chassis id: ec:1d:8b:2e:37:00
+Port id: sfp-sfpplus1
+System Name: mikrotik.example.com
+System Description: MikroTik RouterOS 7.16.1 (stable) 2024-10-10
+Time remaining: 120 seconds
+System Capabilities: R
+Enabled Capabilities: R
+Management Addresses:
+  IP: 192.168.88.1
+
+Total entries displayed: 3

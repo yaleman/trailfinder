@@ -186,9 +186,42 @@ fn parse_raw_neighbor_data(
     local_interface_id: Uuid,
     local_mac: Option<MacAddress>,
 ) -> Result<Vec<NeighborInfo>, TrailFinderError> {
-    // For now, implement basic CDP parsing
-    // This is a simplified version - real implementation would be more robust
+    // Detect protocol type
+    let protocol = detect_neighbor_protocol(raw_data);
 
+    match protocol {
+        NeighborProtocol::Cdp => parse_cdp_neighbor_data(raw_data, local_interface_id, local_mac),
+        NeighborProtocol::Lldp => parse_lldp_neighbor_data(raw_data, local_interface_id, local_mac),
+        NeighborProtocol::Unknown => {
+            debug!("Unknown neighbor protocol format: {}", raw_data);
+            Ok(vec![])
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum NeighborProtocol {
+    Cdp,
+    Lldp,
+    Unknown,
+}
+
+fn detect_neighbor_protocol(raw_data: &str) -> NeighborProtocol {
+    if raw_data.contains("Local Intf:") && raw_data.contains("Chassis id:") {
+        NeighborProtocol::Lldp
+    } else if raw_data.contains("Device ID:") || raw_data.contains("Port ID (outgoing port):") {
+        NeighborProtocol::Cdp
+    } else {
+        NeighborProtocol::Unknown
+    }
+}
+
+/// Parse CDP neighbor data into NeighborInfo structures
+fn parse_cdp_neighbor_data(
+    raw_data: &str,
+    local_interface_id: Uuid,
+    local_mac: Option<MacAddress>,
+) -> Result<Vec<NeighborInfo>, TrailFinderError> {
     // Look for hostname in the raw data
     let remote_hostname = extract_hostname_from_cdp(raw_data)
         .unwrap_or_else(|| "unknown remote hostname".to_string());
@@ -220,6 +253,50 @@ fn parse_raw_neighbor_data(
             local_mac_address: local_mac,
             connection_type,
             discovery_protocol: "CDP".to_string(),
+            management_ip: None, // CDP doesn't typically provide management IP
+            system_description: None, // CDP doesn't provide detailed system description
+            capabilities: Vec::new(), // CDP capabilities handled differently
+        });
+    }
+
+    Ok(neighbor_infos)
+}
+
+/// Parse LLDP neighbor data into NeighborInfo structures
+fn parse_lldp_neighbor_data(
+    raw_data: &str,
+    local_interface_id: Uuid,
+    local_mac: Option<MacAddress>,
+) -> Result<Vec<NeighborInfo>, TrailFinderError> {
+    let remote_hostname = extract_hostname_from_lldp(raw_data)
+        .unwrap_or_else(|| "unknown remote hostname".to_string());
+
+    let remote_interfaces = extract_remote_interface_from_lldp(raw_data);
+    if remote_interfaces.is_empty() {
+        return Err(TrailFinderError::Parse(format!(
+            "Could not find remote interface in LLDP data: {}", raw_data
+        )));
+    }
+
+    let management_ip = extract_management_ip_from_lldp(raw_data);
+    let system_description = extract_system_description_from_lldp(raw_data);
+    let capabilities = extract_capabilities_from_lldp(raw_data);
+
+    let mut neighbor_infos = Vec::new();
+    for remote_interface in remote_interfaces {
+        let connection_type = determine_connection_type_from_lldp(&remote_interface, &capabilities);
+
+        neighbor_infos.push(NeighborInfo {
+            remote_hostname: remote_hostname.clone(),
+            remote_interface,
+            remote_mac_address: None, // Could extract from chassis ID if MAC format
+            local_interface_id,
+            local_mac_address: local_mac,
+            connection_type,
+            discovery_protocol: "LLDP".to_string(),
+            management_ip: management_ip.clone(),
+            system_description: system_description.clone(),
+            capabilities: capabilities.clone(),
         });
     }
 
@@ -318,6 +395,113 @@ fn extract_remote_interface_from_cdp(cdp_data: &str) -> Vec<String> {
     Vec::new()
 }
 
+/// Extract system name from LLDP data
+fn extract_hostname_from_lldp(lldp_data: &str) -> Option<String> {
+    for line in lldp_data.lines() {
+        if let Some(name) = line.strip_prefix("System Name:") {
+            let name = name.trim();
+            if !name.is_empty() && name != "not advertised" {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract port ID from LLDP data
+fn extract_remote_interface_from_lldp(lldp_data: &str) -> Vec<String> {
+    for line in lldp_data.lines() {
+        if let Some(port_id) = line.strip_prefix("Port id:") {
+            let port_id = port_id.trim();
+            if !port_id.is_empty() && port_id != "not advertised" {
+                return vec![port_id.to_string()];
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Extract management IP addresses from LLDP data
+fn extract_management_ip_from_lldp(lldp_data: &str) -> Option<String> {
+    let lines: Vec<&str> = lldp_data.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("Management Addresses:") {
+            // Check next few lines for IP addresses
+            for next_line in lines.iter().skip(i + 1).take(4) {
+                let next_line = next_line.trim();
+                if let Some(ip) = next_line.strip_prefix("IP:") {
+                    return Some(ip.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract system description from LLDP data
+fn extract_system_description_from_lldp(lldp_data: &str) -> Option<String> {
+    let mut in_description = false;
+    let mut description_lines = Vec::new();
+
+    for line in lldp_data.lines() {
+        if line.starts_with("System Description:") {
+            if let Some(desc) = line.strip_prefix("System Description:") {
+                let desc = desc.trim();
+                if !desc.is_empty() && desc != "not advertised" {
+                    description_lines.push(desc.to_string());
+                    in_description = true;
+                }
+            }
+        } else if in_description {
+            // Check if this line is part of the description or a new field
+            if line.contains(":") && !line.starts_with(' ') {
+                break; // New field started
+            } else {
+                description_lines.push(line.trim().to_string());
+            }
+        }
+    }
+
+    if !description_lines.is_empty() {
+        Some(description_lines.join(" "))
+    } else {
+        None
+    }
+}
+
+/// Extract capabilities from LLDP data
+fn extract_capabilities_from_lldp(lldp_data: &str) -> Vec<String> {
+    for line in lldp_data.lines() {
+        if let Some(caps) = line.strip_prefix("Enabled Capabilities:") {
+            let caps = caps.trim();
+            if !caps.is_empty() && caps != "not advertised" {
+                return caps.split(',')
+                    .map(|c| c.trim().to_string())
+                    .filter(|c| !c.is_empty())
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Determine connection type based on LLDP interface name and capabilities
+fn determine_connection_type_from_lldp(interface_name: &str, capabilities: &[String]) -> PeerConnection {
+    // Enhanced logic based on LLDP capabilities
+    if capabilities.contains(&"B".to_string()) {
+        PeerConnection::Trunk // Bridge capability suggests trunk
+    } else if interface_name.to_lowercase().contains("vlan") {
+        // Try to extract VLAN number from interface name
+        if let Some(vlan_id) = NeighborInfo::parse_vlan_from_interface_name(interface_name) {
+            PeerConnection::Vlan(vlan_id)
+        } else {
+            PeerConnection::Trunk // Fallback if VLAN ID can't be parsed
+        }
+    } else {
+        PeerConnection::Trunk // Default fallback
+    }
+}
+
 /// Find device by hostname with fuzzy matching, including system identity
 pub fn find_device_by_hostname_fuzzy(
     hostname: &str,
@@ -393,4 +577,179 @@ fn establish_bidirectional_peer_relationship(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_protocol_detection() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+Chassis id: a0:23:9f:2b:b3:3f
+Port id: Gi2/0/1
+System Name: CORE-SW-01
+"#;
+
+        let cdp_data = r#"
+Device ID: neighbor1
+Platform: cisco
+Port ID (outgoing port): GigabitEthernet0/2
+"#;
+
+        let unknown_data = "random text without protocol markers";
+
+        assert_eq!(detect_neighbor_protocol(lldp_data), NeighborProtocol::Lldp);
+        assert_eq!(detect_neighbor_protocol(cdp_data), NeighborProtocol::Cdp);
+        assert_eq!(detect_neighbor_protocol(unknown_data), NeighborProtocol::Unknown);
+    }
+
+    #[test]
+    fn test_lldp_hostname_extraction() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_hostname_from_lldp(lldp_data), Some("CORE-SW-01".to_string()));
+
+        let no_name_data = r#"
+Local Intf: Gi1/0/1
+System Name: not advertised
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_hostname_from_lldp(no_name_data), None);
+
+        let empty_name_data = r#"
+Local Intf: Gi1/0/1
+System Name:
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_hostname_from_lldp(empty_name_data), None);
+    }
+
+    #[test]
+    fn test_lldp_interface_extraction() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+Port id: Gi2/0/1
+System Name: CORE-SW-01
+"#;
+
+        assert_eq!(extract_remote_interface_from_lldp(lldp_data), vec!["Gi2/0/1"]);
+
+        let no_port_data = r#"
+Local Intf: Gi1/0/1
+Port id: not advertised
+System Name: CORE-SW-01
+"#;
+
+        assert_eq!(extract_remote_interface_from_lldp(no_port_data), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_lldp_management_ip_extraction() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Management Addresses:
+  IP: 10.0.99.2
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_management_ip_from_lldp(lldp_data), Some("10.0.99.2".to_string()));
+
+        let no_mgmt_data = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_management_ip_from_lldp(no_mgmt_data), None);
+    }
+
+    #[test]
+    fn test_lldp_capabilities_extraction() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Enabled Capabilities: B,R
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_capabilities_from_lldp(lldp_data), vec!["B", "R"]);
+
+        let spaced_caps = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Enabled Capabilities: B, R, T
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_capabilities_from_lldp(spaced_caps), vec!["B", "R", "T"]);
+
+        let no_caps_data = r#"
+Local Intf: Gi1/0/1
+System Name: CORE-SW-01
+Enabled Capabilities: not advertised
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(extract_capabilities_from_lldp(no_caps_data), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_lldp_connection_type_determination() {
+        // Test bridge capability
+        let bridge_caps = vec!["B".to_string()];
+        assert_eq!(
+            determine_connection_type_from_lldp("Gi1/0/1", &bridge_caps),
+            PeerConnection::Trunk
+        );
+
+        // Test VLAN interface
+        let no_caps = vec![];
+        assert_eq!(
+            determine_connection_type_from_lldp("vlan40", &no_caps),
+            PeerConnection::Vlan(40)
+        );
+
+        // Test default case
+        assert_eq!(
+            determine_connection_type_from_lldp("eth0", &no_caps),
+            PeerConnection::Trunk
+        );
+    }
+
+    #[test]
+    fn test_lldp_system_description_extraction() {
+        let lldp_data = r#"
+Local Intf: Gi1/0/1
+System Description: Cisco IOS Software, IOS-XE Software
+System Name: CORE-SW-01
+Port id: Gi2/0/1
+"#;
+
+        assert_eq!(
+            extract_system_description_from_lldp(lldp_data),
+            Some("Cisco IOS Software, IOS-XE Software".to_string())
+        );
+
+        let multiline_desc = r#"
+Local Intf: Gi1/0/1
+System Description: Cisco IOS Software
+IOS-XE Software, Catalyst L3 Switch
+Port id: Gi2/0/1
+"#;
+
+        let result = extract_system_description_from_lldp(multiline_desc);
+        assert!(result.is_some());
+        let desc = result.unwrap();
+        assert!(desc.contains("Cisco IOS Software"));
+        assert!(desc.contains("IOS-XE Software"));
+    }
 }

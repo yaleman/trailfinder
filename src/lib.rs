@@ -491,6 +491,13 @@ pub struct NeighborInfo {
     pub connection_type: PeerConnection,
     /// Discovery protocol used (CDP, LLDP, etc.)
     pub discovery_protocol: String,
+    /// Management IP address of the remote device (LLDP-specific)
+    #[schema(value_type = Option<String>, example = "192.168.1.1")]
+    pub management_ip: Option<String>,
+    /// System description of the remote device (LLDP-specific)
+    pub system_description: Option<String>,
+    /// Device capabilities (LLDP-specific, e.g., ["Bridge", "Router"])
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]

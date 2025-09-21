@@ -37,6 +37,27 @@ pub trait DeviceHandler {
     fn get_routes_command(&self) -> String;
     fn get_cdp_command(&self) -> String;
 
+    /// Get LLDP neighbors command - default implementation returns empty string for backward compatibility
+    fn get_lldp_command(&self) -> String {
+        String::new()
+    }
+
+    /// Check if device supports LLDP neighbor discovery
+    fn supports_lldp(&self) -> bool {
+        !self.get_lldp_command().is_empty()
+    }
+
+    /// Parse LLDP neighbor data and store in device interfaces
+    fn parse_lldp(
+        &mut self,
+        input_data: &str,
+        devices: Vec<Device>,
+    ) -> Result<usize, TrailFinderError> {
+        // Default implementation - no LLDP support
+        let _ = (input_data, devices);
+        Ok(0)
+    }
+
     fn interrogate_device(
         &self,
         ssh_client: &mut SshClient,
