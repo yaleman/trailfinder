@@ -224,3 +224,4 @@ See TODO.md for the current development plan and task status.
 - Use real device output samples from `src/tests/` directory
 - Maintain test coverage above 70% for all core modules
 - Each brand parser should have 20+ tests covering all parsing functions
+- always finish the task to the best of your ability, stopping half way through unless there is a major blocker is NEVER acceptable

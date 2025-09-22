@@ -19,7 +19,9 @@ static AUTH_CACHE: LazyLock<RwLock<HashMap<String, AuthMethod>>> = LazyLock::new
 
 #[derive(Debug, Clone)]
 pub enum AuthMethod {
-    SshAgent,
+    SshAgent {
+        successful_identity_index: Option<usize>,
+    },
     KeyFile {
         path: String,
         passphrase: Option<String>,
@@ -439,7 +441,9 @@ impl SshClient {
 
         // Add SSH agent if enabled
         if use_ssh_agent {
-            auth_methods.push(AuthMethod::SshAgent);
+            auth_methods.push(AuthMethod::SshAgent {
+                successful_identity_index: None,
+            });
         }
 
         // Add all key files in order
@@ -460,7 +464,16 @@ impl SshClient {
                 .authenticate_session(&mut session, &auth_method)
                 .await?
             {
-                self.connection_info.successful_auth = Some(auth_method);
+                // Get the updated auth method (which might have the specific identity index for SSH agent)
+                let final_auth_method = if let AuthMethod::SshAgent { successful_identity_index: None } = auth_method {
+                    // If SSH agent auth succeeded but we don't have the specific index cached yet,
+                    // get it from the cache (authenticate_session should have cached it)
+                    Self::get_cached_auth_method(&self.hostname).unwrap_or(auth_method)
+                } else {
+                    auth_method
+                };
+
+                self.connection_info.successful_auth = Some(final_auth_method);
                 self.session = Some(session);
                 return Ok(());
             }
@@ -477,7 +490,7 @@ impl SshClient {
         auth_method: &AuthMethod,
     ) -> Result<bool, SshError> {
         match auth_method {
-            AuthMethod::SshAgent => {
+            AuthMethod::SshAgent { successful_identity_index } => {
                 debug!("Attempting SSH agent authentication");
 
                 // Check if SSH_AUTH_SOCK is set (indicates SSH agent is available)
@@ -515,6 +528,43 @@ impl SshClient {
                     debug!("💡 Add keys to SSH agent with: ssh-add ~/.ssh/your_key");
                     return Ok(false);
                 }
+
+                // If we have a specific identity index that worked before, try that first
+                if let Some(identity_idx) = successful_identity_index
+                    && *identity_idx < identities.len() {
+                        debug!("Using cached SSH agent identity {}", identity_idx + 1);
+                        let public_key = &identities[*identity_idx];
+
+                        // Try the cached identity
+                        let mut agent_signer = match AgentClient::connect_env().await {
+                            Ok(client) => client,
+                            Err(e) => {
+                                debug!("Failed to connect to SSH agent for cached identity: {}", e);
+                                return Ok(false);
+                            }
+                        };
+
+                        let auth_result = match session.authenticate_publickey_with(
+                            &self.connection_info.username,
+                            public_key.clone(),
+                            None,
+                            &mut agent_signer,
+                        ).await {
+                            Ok(result) => result,
+                            Err(e) => {
+                                debug!("Cached SSH agent identity failed: {}", e);
+                                // Fall through to try all identities
+                                client::AuthResult::Failure { partial_success: false, remaining_methods: russh::MethodSet::empty() }
+                            }
+                        };
+
+                        if matches!(auth_result, client::AuthResult::Success) {
+                            debug!("✅ Cached SSH agent identity {} authentication successful", identity_idx + 1);
+                            return Ok(true);
+                        } else {
+                            debug!("Cached SSH agent identity {} failed, falling back to full discovery", identity_idx + 1);
+                        }
+                    }
 
                 // Try each identity from the SSH agent using the Signer trait
                 // Process identities in batches of 5 to prevent overwhelming the SSH agent
@@ -583,6 +633,13 @@ impl SshClient {
                         match auth_result {
                             client::AuthResult::Success => {
                                 debug!("✅ SSH agent authentication successful with identity {}", global_idx);
+
+                                // Cache the successful identity index for future use
+                                let successful_auth = AuthMethod::SshAgent {
+                                    successful_identity_index: Some(global_idx - 1), // Convert to 0-based index
+                                };
+                                Self::cache_auth_method(&self.hostname, &successful_auth);
+
                                 return Ok(true);
                             }
                             client::AuthResult::Failure { partial_success: true, .. } => {
@@ -882,36 +939,51 @@ impl SshClient {
     async fn execute_command_live(&mut self, command: &str) -> Result<String, SshError> {
         debug!("Executing live command: {}", command);
 
-        // Get the session or create a new one if needed
-        let session = match &self.session {
-            Some(_) => {
-                // For simplicity, create a new session each time for now
-                let mut session = self.create_session().await?;
+        // Reuse the existing session if available
+        if self.session.is_none() {
+            return Err(SshError::Authentication("No session available".to_string()));
+        }
+
+        trace!("Creating channel for command: {}", command);
+
+        // Try to create channel with existing session
+        let session = self.session.as_ref().ok_or_else(|| {
+            SshError::Authentication("No session available".to_string())
+        })?;
+        let mut channel = match session.channel_open_session().await {
+            Ok(channel) => channel,
+            Err(e) => {
+                debug!("Failed to create channel with existing session: {}", e);
+                debug!("Session may be stale, recreating session and retrying");
+
+                // Session is stale, create a new one
+                let mut new_session = self.create_session().await?;
                 if let Some(auth_method) = &self.connection_info.successful_auth.clone() {
-                    if !self.authenticate_session(&mut session, auth_method).await? {
-                        // Invalidate cache since the cached auth method failed
+                    if !self.authenticate_session(&mut new_session, auth_method).await? {
                         Self::invalidate_cached_auth_method(&self.hostname);
                         return Err(SshError::Authentication(
-                            "Cached authentication method failed".to_string(),
+                            "Cached authentication method failed on reconnect".to_string(),
                         ));
                     }
                 } else {
                     return Err(SshError::Authentication(
-                        "No successful authentication method cached".to_string(),
+                        "No successful authentication method available for reconnect".to_string(),
                     ));
                 }
-                session
-            }
-            None => {
-                return Err(SshError::Authentication("No session available".to_string()));
+
+                // Replace the old session with the new one
+                self.session = Some(new_session);
+
+                // Try to create channel again with new session
+                let new_session = self.session.as_ref().ok_or_else(|| {
+                    SshError::Authentication("Session lost after reconnect".to_string())
+                })?;
+                new_session.channel_open_session().await.map_err(|e| {
+                    debug!("Failed to create channel even after reconnecting: {}", e);
+                    SshError::Command(format!("Failed to create channel after reconnect: {}", e))
+                })?
             }
         };
-
-        trace!("Creating channel for command: {}", command);
-        let mut channel = session.channel_open_session().await.map_err(|e| {
-            debug!("Failed to create channel: {}", e);
-            SshError::Command(format!("Failed to create channel: {}", e))
-        })?;
 
         debug!("Executing command on channel: {}", command);
         channel.exec(true, command).await.map_err(|e| {
@@ -1018,7 +1090,6 @@ impl SshClient {
     }
 
     /// Store successful authentication method in cache
-    #[allow(dead_code)]
     fn cache_auth_method(hostname: &str, auth_method: &AuthMethod) {
         match AUTH_CACHE.write() {
             Ok(mut cache) => {
@@ -1032,7 +1103,6 @@ impl SshClient {
     }
 
     /// Remove cached authentication method (used when cached method fails)
-    #[allow(dead_code)]
     fn invalidate_cached_auth_method(hostname: &str) {
         match AUTH_CACHE.write() {
             Ok(mut cache) => {
@@ -1362,7 +1432,9 @@ Host *
             address,
             username: username.clone(),
             timeout,
-            successful_auth: Some(AuthMethod::SshAgent),
+            successful_auth: Some(AuthMethod::SshAgent {
+                successful_identity_index: None,
+            }),
         };
 
         assert_eq!(connection_info.address, address);
@@ -1370,15 +1442,17 @@ Host *
         assert_eq!(connection_info.timeout, timeout);
         assert!(matches!(
             connection_info.successful_auth,
-            Some(AuthMethod::SshAgent)
+            Some(AuthMethod::SshAgent { .. })
         ));
     }
 
     #[test]
     fn test_auth_method_variants() {
         // Test SshAgent variant
-        let auth1 = AuthMethod::SshAgent;
-        assert!(matches!(auth1, AuthMethod::SshAgent));
+        let auth1 = AuthMethod::SshAgent {
+            successful_identity_index: None,
+        };
+        assert!(matches!(auth1, AuthMethod::SshAgent { .. }));
 
         // Test KeyFile variant without passphrase
         let auth2 = AuthMethod::KeyFile {
@@ -1676,7 +1750,9 @@ Host empty-lines.example.com
     #[test]
     fn test_auth_cache_operations() {
         let hostname = "test-cache-ops.example.com";
-        let auth_method = AuthMethod::SshAgent;
+        let auth_method = AuthMethod::SshAgent {
+            successful_identity_index: None,
+        };
 
         // Ensure clean state for this test
         SshClient::invalidate_cached_auth_method(hostname);
@@ -1690,7 +1766,7 @@ Host empty-lines.example.com
         // Test cache hit
         let cached = SshClient::get_cached_auth_method(hostname);
         assert!(cached.is_some());
-        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent { .. }));
 
         // Test cache invalidation
         SshClient::invalidate_cached_auth_method(hostname);
@@ -1701,7 +1777,9 @@ Host empty-lines.example.com
     fn test_auth_cache_multiple_devices() {
         let hostname1 = "multi-device1.example.com";
         let hostname2 = "multi-device2.example.com";
-        let auth_method1 = AuthMethod::SshAgent;
+        let auth_method1 = AuthMethod::SshAgent {
+            successful_identity_index: None,
+        };
         let auth_method2 = AuthMethod::KeyFile {
             path: "/path/to/key".to_string(),
             passphrase: None,
@@ -1721,7 +1799,7 @@ Host empty-lines.example.com
 
         assert!(cached1.is_some());
         assert!(cached2.is_some());
-        assert!(matches!(cached1.unwrap(), AuthMethod::SshAgent));
+        assert!(matches!(cached1.unwrap(), AuthMethod::SshAgent { .. }));
         assert!(matches!(cached2.unwrap(), AuthMethod::KeyFile { .. }));
 
         // Invalidate one device and verify the other remains
@@ -1736,7 +1814,9 @@ Host empty-lines.example.com
     #[test]
     fn test_auth_cache_overwrite() {
         let hostname = "overwrite-test.example.com";
-        let auth_method1 = AuthMethod::SshAgent;
+        let auth_method1 = AuthMethod::SshAgent {
+            successful_identity_index: None,
+        };
         let auth_method2 = AuthMethod::Password("password".to_string());
 
         // Ensure clean state for this test
@@ -1745,7 +1825,7 @@ Host empty-lines.example.com
         // Cache first auth method
         SshClient::cache_auth_method(hostname, &auth_method1);
         let cached = SshClient::get_cached_auth_method(hostname);
-        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+        assert!(matches!(cached.unwrap(), AuthMethod::SshAgent { .. }));
 
         // Overwrite with second auth method
         SshClient::cache_auth_method(hostname, &auth_method2);
@@ -1768,7 +1848,9 @@ Host empty-lines.example.com
                 thread::spawn(move || {
                     let thread_id = THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
                     let hostname = format!("thread-safety-{}.example.com", thread_id);
-                    let auth_method = AuthMethod::SshAgent;
+                    let auth_method = AuthMethod::SshAgent {
+            successful_identity_index: None,
+        };
 
                     // Ensure clean state for this thread's hostname
                     SshClient::invalidate_cached_auth_method(&hostname);
@@ -1777,7 +1859,7 @@ Host empty-lines.example.com
                     SshClient::cache_auth_method(&hostname, &auth_method);
                     let cached = SshClient::get_cached_auth_method(&hostname);
                     assert!(cached.is_some());
-                    assert!(matches!(cached.unwrap(), AuthMethod::SshAgent));
+                    assert!(matches!(cached.unwrap(), AuthMethod::SshAgent { .. }));
 
                     // Clean up after test
                     SshClient::invalidate_cached_auth_method(&hostname);
