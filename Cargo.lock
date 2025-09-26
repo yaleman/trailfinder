@@ -3194,6 +3194,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_threads"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c7398b9c8b70908f6371f47ed36737907c87c52af34c268fed0bf0ceb92ead9"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5244,9 +5253,9 @@ dependencies = [
 
 [[package]]
 name = "terminator-rs"
-version = "0.14.5"
+version = "0.15.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59c6721c1d3cb4106cae839d8c476ca32653d6ccfb276d38dde957e78ee33bca"
+checksum = "1713c7758ae6f7d1ebdde9c105f42ec4988857055381cf94a274cdf4e70678cc"
 dependencies = [
  "accessibility",
  "accessibility-sys",
@@ -5391,7 +5400,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ca967379f9d8eb8058d86ed467d81d03e81acd45757e4ca341c24affbe8e8e3"
 dependencies = [
  "deranged",
+ "libc",
  "num-conv",
+ "num_threads",
  "powerfmt",
  "serde",
  "time-core",
@@ -5718,6 +5729,7 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
  "tracing-log",
