@@ -384,7 +384,13 @@ pub async fn main_func() -> Result<(), Box<dyn std::error::Error>> {
             };
             add_command(&mut app_config, config_path, &params).await?;
         }
-        Commands::Web { port, address, tls_cert, tls_key, tls_hostname } => {
+        Commands::Web {
+            port,
+            address,
+            tls_cert,
+            tls_key,
+            tls_hostname,
+        } => {
             // Override config TLS settings with CLI arguments if provided
             let mut web_config = app_config.clone();
             if let Some(cert_path) = tls_cert {

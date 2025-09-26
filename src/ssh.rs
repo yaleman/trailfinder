@@ -1,9 +1,14 @@
-use std::{collections::HashMap, net::SocketAddr, sync::{Arc, RwLock}, time::Duration};
 use std::sync::LazyLock;
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
+use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
-use russh::keys::agent::client::AgentClient;
 
 use tracing::{debug, error, trace, warn};
 
@@ -13,9 +18,8 @@ use crate::{DeviceType, TrailFinderError, config::DeviceBrand};
 
 // Global authentication cache for runtime persistence
 // Maps hostname to successful authentication method
-static AUTH_CACHE: LazyLock<RwLock<HashMap<String, AuthMethod>>> = LazyLock::new(|| {
-    RwLock::new(HashMap::new())
-});
+static AUTH_CACHE: LazyLock<RwLock<HashMap<String, AuthMethod>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Debug, Clone)]
 pub enum AuthMethod {
@@ -77,9 +81,6 @@ impl From<TrailFinderError> for SshError {
 // SSH Agent integration using russh's built-in AgentClient
 // Note: Current implementation lists identities but requires additional work
 // for full signing integration with russh's authentication system
-
-
-
 
 // Handler for russh client
 #[derive(Clone)]
@@ -196,20 +197,34 @@ impl SshClient {
         );
 
         // Check cache for previously successful authentication method
-        let mut client = if let Some(cached_auth_method) = Self::get_cached_auth_method(&device_config.hostname) {
-            debug!("🎯 Attempting cached authentication method for {}", device_config.hostname);
+        let mut client = if let Some(cached_auth_method) =
+            Self::get_cached_auth_method(&device_config.hostname)
+        {
+            debug!(
+                "🎯 Attempting cached authentication method for {}",
+                device_config.hostname
+            );
 
             // Create client and try cached method first
             let mut client = Self::new(ip_address, username.to_string(), timeout);
             let mut session = client.create_session().await?;
 
-            if client.authenticate_session(&mut session, &cached_auth_method).await? {
-                debug!("✅ Cached authentication method succeeded for {}", device_config.hostname);
+            if client
+                .authenticate_session(&mut session, &cached_auth_method)
+                .await?
+            {
+                debug!(
+                    "✅ Cached authentication method succeeded for {}",
+                    device_config.hostname
+                );
                 client.connection_info.successful_auth = Some(cached_auth_method);
                 client.session = Some(session);
                 client
             } else {
-                debug!("❌ Cached authentication method failed for {}, invalidating cache and falling back to discovery", device_config.hostname);
+                debug!(
+                    "❌ Cached authentication method failed for {}, invalidating cache and falling back to discovery",
+                    device_config.hostname
+                );
                 Self::invalidate_cached_auth_method(&device_config.hostname);
 
                 // Fall back to full discovery
@@ -465,7 +480,10 @@ impl SshClient {
                 .await?
             {
                 // Get the updated auth method (which might have the specific identity index for SSH agent)
-                let final_auth_method = if let AuthMethod::SshAgent { successful_identity_index: None } = auth_method {
+                let final_auth_method = if let AuthMethod::SshAgent {
+                    successful_identity_index: None,
+                } = auth_method
+                {
                     // If SSH agent auth succeeded but we don't have the specific index cached yet,
                     // get it from the cache (authenticate_session should have cached it)
                     Self::get_cached_auth_method(&self.hostname).unwrap_or(auth_method)
@@ -490,7 +508,9 @@ impl SshClient {
         auth_method: &AuthMethod,
     ) -> Result<bool, SshError> {
         match auth_method {
-            AuthMethod::SshAgent { successful_identity_index } => {
+            AuthMethod::SshAgent {
+                successful_identity_index,
+            } => {
                 debug!("Attempting SSH agent authentication");
 
                 // Check if SSH_AUTH_SOCK is set (indicates SSH agent is available)
@@ -531,52 +551,78 @@ impl SshClient {
 
                 // If we have a specific identity index that worked before, try that first
                 if let Some(identity_idx) = successful_identity_index
-                    && *identity_idx < identities.len() {
-                        debug!("Using cached SSH agent identity {}", identity_idx + 1);
-                        let public_key = &identities[*identity_idx];
+                    && *identity_idx < identities.len()
+                {
+                    debug!("Using cached SSH agent identity {}", identity_idx + 1);
+                    let public_key = &identities[*identity_idx];
 
-                        // Try the cached identity
-                        let mut agent_signer = match AgentClient::connect_env().await {
-                            Ok(client) => client,
-                            Err(e) => {
-                                debug!("Failed to connect to SSH agent for cached identity: {}", e);
-                                return Ok(false);
-                            }
-                        };
+                    // Try the cached identity
+                    let mut agent_signer = match AgentClient::connect_env().await {
+                        Ok(client) => client,
+                        Err(e) => {
+                            debug!("Failed to connect to SSH agent for cached identity: {}", e);
+                            return Ok(false);
+                        }
+                    };
 
-                        let auth_result = match session.authenticate_publickey_with(
+                    let auth_result = match session
+                        .authenticate_publickey_with(
                             &self.connection_info.username,
                             public_key.clone(),
                             None,
                             &mut agent_signer,
-                        ).await {
-                            Ok(result) => result,
-                            Err(e) => {
-                                debug!("Cached SSH agent identity failed: {}", e);
-                                // Fall through to try all identities
-                                client::AuthResult::Failure { partial_success: false, remaining_methods: russh::MethodSet::empty() }
+                        )
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(e) => {
+                            debug!("Cached SSH agent identity failed: {}", e);
+                            // Fall through to try all identities
+                            client::AuthResult::Failure {
+                                partial_success: false,
+                                remaining_methods: russh::MethodSet::empty(),
                             }
-                        };
-
-                        if matches!(auth_result, client::AuthResult::Success) {
-                            debug!("✅ Cached SSH agent identity {} authentication successful", identity_idx + 1);
-                            return Ok(true);
-                        } else {
-                            debug!("Cached SSH agent identity {} failed, falling back to full discovery", identity_idx + 1);
                         }
+                    };
+
+                    if matches!(auth_result, client::AuthResult::Success) {
+                        debug!(
+                            "✅ Cached SSH agent identity {} authentication successful",
+                            identity_idx + 1
+                        );
+                        return Ok(true);
+                    } else {
+                        debug!(
+                            "Cached SSH agent identity {} failed, falling back to full discovery",
+                            identity_idx + 1
+                        );
                     }
+                }
 
                 // Try each identity from the SSH agent using the Signer trait
                 // Process identities in batches of 5 to prevent overwhelming the SSH agent
                 const BATCH_SIZE: usize = 5;
-                debug!("Attempting authentication with {} SSH agent identities (processing {} at a time)", identities.len(), BATCH_SIZE);
+                debug!(
+                    "Attempting authentication with {} SSH agent identities (processing {} at a time)",
+                    identities.len(),
+                    BATCH_SIZE
+                );
 
                 for (batch_idx, batch) in identities.chunks(BATCH_SIZE).enumerate() {
-                    debug!("Processing batch {} of identities ({} total batches)", batch_idx + 1, identities.len().div_ceil(BATCH_SIZE));
+                    debug!(
+                        "Processing batch {} of identities ({} total batches)",
+                        batch_idx + 1,
+                        identities.len().div_ceil(BATCH_SIZE)
+                    );
 
                     for (i, public_key) in batch.iter().enumerate() {
                         let global_idx = batch_idx * BATCH_SIZE + i + 1;
-                        debug!("Trying SSH agent identity {}/{}: type={:?}", global_idx, identities.len(), public_key.algorithm());
+                        debug!(
+                            "Trying SSH agent identity {}/{}: type={:?}",
+                            global_idx,
+                            identities.len(),
+                            public_key.algorithm()
+                        );
 
                         // Create a new agent client for each attempt since authenticate_publickey_with needs a mutable reference
                         // Add a small delay between attempts to prevent overwhelming the SSH agent
@@ -586,17 +632,25 @@ impl SshClient {
 
                         let mut agent_signer = match tokio::time::timeout(
                             tokio::time::Duration::from_secs(5),
-                            AgentClient::connect_env()
-                        ).await {
+                            AgentClient::connect_env(),
+                        )
+                        .await
+                        {
                             Ok(Ok(client)) => client,
                             Ok(Err(e)) => {
-                                debug!("Failed to reconnect to SSH agent for identity {}: {}", global_idx, e);
+                                debug!(
+                                    "Failed to reconnect to SSH agent for identity {}: {}",
+                                    global_idx, e
+                                );
                                 // If we can't connect to agent, break out of the batch entirely
                                 debug!("SSH agent connection failed, stopping current batch");
                                 break;
                             }
                             Err(_) => {
-                                debug!("SSH agent connection timed out for identity {}", global_idx);
+                                debug!(
+                                    "SSH agent connection timed out for identity {}",
+                                    global_idx
+                                );
                                 debug!("SSH agent connection timeout, stopping current batch");
                                 break;
                             }
@@ -610,29 +664,45 @@ impl SshClient {
                                 public_key.clone(),
                                 None, // hash_alg - let russh choose the appropriate hash algorithm
                                 &mut agent_signer,
-                            )
-                        ).await {
+                            ),
+                        )
+                        .await
+                        {
                             Ok(Ok(result)) => result,
                             Ok(Err(e)) => {
                                 let error_msg = e.to_string();
-                                debug!("SSH agent identity {} authentication failed: {}", global_idx, error_msg);
+                                debug!(
+                                    "SSH agent identity {} authentication failed: {}",
+                                    global_idx, error_msg
+                                );
 
                                 // If we get event loop errors, add a longer delay before continuing
-                                if error_msg.contains("Could not reach the event loop") || error_msg.contains("event loop") {
-                                    debug!("Event loop error detected, adding delay before next attempt");
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                if error_msg.contains("Could not reach the event loop")
+                                    || error_msg.contains("event loop")
+                                {
+                                    debug!(
+                                        "Event loop error detected, adding delay before next attempt"
+                                    );
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(200))
+                                        .await;
                                 }
                                 continue;
                             }
                             Err(_) => {
-                                debug!("SSH agent identity {} authentication timed out", global_idx);
+                                debug!(
+                                    "SSH agent identity {} authentication timed out",
+                                    global_idx
+                                );
                                 continue;
                             }
                         };
 
                         match auth_result {
                             client::AuthResult::Success => {
-                                debug!("✅ SSH agent authentication successful with identity {}", global_idx);
+                                debug!(
+                                    "✅ SSH agent authentication successful with identity {}",
+                                    global_idx
+                                );
 
                                 // Cache the successful identity index for future use
                                 let successful_auth = AuthMethod::SshAgent {
@@ -642,12 +712,24 @@ impl SshClient {
 
                                 return Ok(true);
                             }
-                            client::AuthResult::Failure { partial_success: true, .. } => {
-                                debug!("SSH agent authentication partial success with identity {} - additional auth required", global_idx);
+                            client::AuthResult::Failure {
+                                partial_success: true,
+                                ..
+                            } => {
+                                debug!(
+                                    "SSH agent authentication partial success with identity {} - additional auth required",
+                                    global_idx
+                                );
                                 continue;
                             }
-                            client::AuthResult::Failure { partial_success: false, .. } => {
-                                debug!("SSH agent authentication failed with identity {}", global_idx);
+                            client::AuthResult::Failure {
+                                partial_success: false,
+                                ..
+                            } => {
+                                debug!(
+                                    "SSH agent authentication failed with identity {}",
+                                    global_idx
+                                );
                                 continue;
                             }
                         }
@@ -655,7 +737,10 @@ impl SshClient {
 
                     // Add delay between batches to prevent overwhelming the SSH agent
                     if batch_idx < identities.len().div_ceil(BATCH_SIZE) - 1 {
-                        debug!("Batch {} completed, waiting before next batch", batch_idx + 1);
+                        debug!(
+                            "Batch {} completed, waiting before next batch",
+                            batch_idx + 1
+                        );
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -947,9 +1032,10 @@ impl SshClient {
         trace!("Creating channel for command: {}", command);
 
         // Try to create channel with existing session
-        let session = self.session.as_ref().ok_or_else(|| {
-            SshError::Authentication("No session available".to_string())
-        })?;
+        let session = self
+            .session
+            .as_ref()
+            .ok_or_else(|| SshError::Authentication("No session available".to_string()))?;
         let mut channel = match session.channel_open_session().await {
             Ok(channel) => channel,
             Err(e) => {
@@ -959,7 +1045,10 @@ impl SshClient {
                 // Session is stale, create a new one
                 let mut new_session = self.create_session().await?;
                 if let Some(auth_method) = &self.connection_info.successful_auth.clone() {
-                    if !self.authenticate_session(&mut new_session, auth_method).await? {
+                    if !self
+                        .authenticate_session(&mut new_session, auth_method)
+                        .await?
+                    {
                         Self::invalidate_cached_auth_method(&self.hostname);
                         return Err(SshError::Authentication(
                             "Cached authentication method failed on reconnect".to_string(),
@@ -1838,8 +1927,8 @@ Host empty-lines.example.com
 
     #[test]
     fn test_auth_cache_thread_safety() {
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         static THREAD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -1849,8 +1938,8 @@ Host empty-lines.example.com
                     let thread_id = THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
                     let hostname = format!("thread-safety-{}.example.com", thread_id);
                     let auth_method = AuthMethod::SshAgent {
-            successful_identity_index: None,
-        };
+                        successful_identity_index: None,
+                    };
 
                     // Ensure clean state for this thread's hostname
                     SshClient::invalidate_cached_auth_method(&hostname);

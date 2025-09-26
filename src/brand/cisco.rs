@@ -775,7 +775,11 @@ impl Cisco {
     }
 
     /// Parse individual LLDP fields from output lines
-    fn parse_lldp_field(&self, neighbor: &mut LldpNeighborData, line: &str) -> Result<(), TrailFinderError> {
+    fn parse_lldp_field(
+        &self,
+        neighbor: &mut LldpNeighborData,
+        line: &str,
+    ) -> Result<(), TrailFinderError> {
         if let Some(value) = line.strip_prefix("Local Intf:") {
             neighbor.local_interface = value.trim().to_string();
         } else if let Some(value) = line.strip_prefix("Chassis id:") {
@@ -816,7 +820,8 @@ impl Cisco {
             return Ok(Vec::new());
         }
 
-        let capabilities = caps_str.split(',')
+        let capabilities = caps_str
+            .split(',')
             .map(|c| c.trim().to_string())
             .filter(|c| !c.is_empty())
             .collect();
@@ -842,7 +847,10 @@ impl Cisco {
     }
 
     /// Associate LLDP neighbor data with appropriate interface
-    fn store_lldp_neighbor_for_interface(&mut self, neighbor: &LldpNeighborData) -> Result<usize, TrailFinderError> {
+    fn store_lldp_neighbor_for_interface(
+        &mut self,
+        neighbor: &LldpNeighborData,
+    ) -> Result<usize, TrailFinderError> {
         if neighbor.local_interface.is_empty() {
             return Ok(0);
         }
@@ -852,7 +860,8 @@ impl Cisco {
 
         for candidate in interface_candidates {
             // Find interface index first to avoid borrowing issues
-            let interface_index = self.interfaces
+            let interface_index = self
+                .interfaces
                 .iter()
                 .position(|iface| self.interface_name_matches(&iface.name, &candidate));
 
@@ -861,16 +870,27 @@ impl Cisco {
                 let neighbor_key = format!("lldp_{}", neighbor.chassis_id);
                 let neighbor_data = neighbor.to_string();
 
-                if existing_interface.neighbour_string_data.get(&neighbor_key) != Some(&neighbor_data) {
-                    existing_interface.neighbour_string_data.insert(neighbor_key, neighbor_data);
-                    debug!("Stored LLDP neighbor for interface {}: {}", candidate, neighbor.system_name.as_deref().unwrap_or("unknown"));
+                if existing_interface.neighbour_string_data.get(&neighbor_key)
+                    != Some(&neighbor_data)
+                {
+                    existing_interface
+                        .neighbour_string_data
+                        .insert(neighbor_key, neighbor_data);
+                    debug!(
+                        "Stored LLDP neighbor for interface {}: {}",
+                        candidate,
+                        neighbor.system_name.as_deref().unwrap_or("unknown")
+                    );
                     return Ok(1);
                 }
                 return Ok(0);
             }
         }
 
-        debug!("Interface {} not found for LLDP neighbor", neighbor.local_interface);
+        debug!(
+            "Interface {} not found for LLDP neighbor",
+            neighbor.local_interface
+        );
         Ok(0)
     }
 
@@ -905,7 +925,8 @@ impl Cisco {
 
     /// Normalize interface name to full form for comparison
     fn normalize_interface_name(&self, name: &str) -> String {
-        let name = name.replace("Gig ", "GigabitEthernet")
+        let name = name
+            .replace("Gig ", "GigabitEthernet")
             .replace("Gi", "GigabitEthernet")
             .replace("Fa ", "FastEthernet")
             .replace("Fa", "FastEthernet")
@@ -960,7 +981,10 @@ impl std::fmt::Display for LldpNeighborData {
         }
 
         if !self.capabilities.is_empty() {
-            lines.push(format!("Enabled Capabilities: {}", self.capabilities.join(",")));
+            lines.push(format!(
+                "Enabled Capabilities: {}",
+                self.capabilities.join(",")
+            ));
         }
 
         if let Some(ttl) = self.ttl {
@@ -1658,10 +1682,15 @@ Vlan999 is down, line protocol is down"#;
         assert!(changes > 0, "Should have processed LLDP neighbors");
 
         // Verify neighbor data was stored
-        let found_neighbors = device.interfaces.iter()
+        let found_neighbors = device
+            .interfaces
+            .iter()
             .filter(|iface| !iface.neighbour_string_data.is_empty())
             .count();
-        assert!(found_neighbors > 0, "Should have stored neighbor data in interfaces");
+        assert!(
+            found_neighbors > 0,
+            "Should have stored neighbor data in interfaces"
+        );
     }
 
     #[test]
@@ -1670,25 +1699,42 @@ Vlan999 is down, line protocol is down"#;
         let mut neighbor = LldpNeighborData::new();
 
         // Test parsing individual fields
-        device.parse_lldp_field(&mut neighbor, "Local Intf: Gi1/0/1").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "Local Intf: Gi1/0/1")
+            .unwrap();
         assert_eq!(neighbor.local_interface, "Gi1/0/1");
 
-        device.parse_lldp_field(&mut neighbor, "System Name: CORE-SW-01").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "System Name: CORE-SW-01")
+            .unwrap();
         assert_eq!(neighbor.system_name, Some("CORE-SW-01".to_string()));
 
-        device.parse_lldp_field(&mut neighbor, "Port id: Gi2/0/1").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "Port id: Gi2/0/1")
+            .unwrap();
         assert_eq!(neighbor.port_id, "Gi2/0/1");
 
-        device.parse_lldp_field(&mut neighbor, "Chassis id: a0:23:9f:2b:b3:3f").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "Chassis id: a0:23:9f:2b:b3:3f")
+            .unwrap();
         assert_eq!(neighbor.chassis_id, "a0:23:9f:2b:b3:3f");
 
-        device.parse_lldp_field(&mut neighbor, "System Description: Cisco IOS Software").unwrap();
-        assert_eq!(neighbor.system_description, Some("Cisco IOS Software".to_string()));
+        device
+            .parse_lldp_field(&mut neighbor, "System Description: Cisco IOS Software")
+            .unwrap();
+        assert_eq!(
+            neighbor.system_description,
+            Some("Cisco IOS Software".to_string())
+        );
 
-        device.parse_lldp_field(&mut neighbor, "Enabled Capabilities: B,R").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "Enabled Capabilities: B,R")
+            .unwrap();
         assert_eq!(neighbor.capabilities, vec!["B", "R"]);
 
-        device.parse_lldp_field(&mut neighbor, "Time remaining: 120 seconds").unwrap();
+        device
+            .parse_lldp_field(&mut neighbor, "Time remaining: 120 seconds")
+            .unwrap();
         assert_eq!(neighbor.ttl, Some(120));
     }
 

@@ -274,7 +274,8 @@ fn parse_lldp_neighbor_data(
     let remote_interfaces = extract_remote_interface_from_lldp(raw_data);
     if remote_interfaces.is_empty() {
         return Err(TrailFinderError::Parse(format!(
-            "Could not find remote interface in LLDP data: {}", raw_data
+            "Could not find remote interface in LLDP data: {}",
+            raw_data
         )));
     }
 
@@ -475,7 +476,8 @@ fn extract_capabilities_from_lldp(lldp_data: &str) -> Vec<String> {
         if let Some(caps) = line.strip_prefix("Enabled Capabilities:") {
             let caps = caps.trim();
             if !caps.is_empty() && caps != "not advertised" {
-                return caps.split(',')
+                return caps
+                    .split(',')
                     .map(|c| c.trim().to_string())
                     .filter(|c| !c.is_empty())
                     .collect();
@@ -486,7 +488,10 @@ fn extract_capabilities_from_lldp(lldp_data: &str) -> Vec<String> {
 }
 
 /// Determine connection type based on LLDP interface name and capabilities
-fn determine_connection_type_from_lldp(interface_name: &str, capabilities: &[String]) -> PeerConnection {
+fn determine_connection_type_from_lldp(
+    interface_name: &str,
+    capabilities: &[String],
+) -> PeerConnection {
     // Enhanced logic based on LLDP capabilities
     if capabilities.contains(&"B".to_string()) {
         PeerConnection::Trunk // Bridge capability suggests trunk
@@ -602,7 +607,10 @@ Port ID (outgoing port): GigabitEthernet0/2
 
         assert_eq!(detect_neighbor_protocol(lldp_data), NeighborProtocol::Lldp);
         assert_eq!(detect_neighbor_protocol(cdp_data), NeighborProtocol::Cdp);
-        assert_eq!(detect_neighbor_protocol(unknown_data), NeighborProtocol::Unknown);
+        assert_eq!(
+            detect_neighbor_protocol(unknown_data),
+            NeighborProtocol::Unknown
+        );
     }
 
     #[test]
@@ -613,7 +621,10 @@ System Name: CORE-SW-01
 Port id: Gi2/0/1
 "#;
 
-        assert_eq!(extract_hostname_from_lldp(lldp_data), Some("CORE-SW-01".to_string()));
+        assert_eq!(
+            extract_hostname_from_lldp(lldp_data),
+            Some("CORE-SW-01".to_string())
+        );
 
         let no_name_data = r#"
 Local Intf: Gi1/0/1
@@ -640,7 +651,10 @@ Port id: Gi2/0/1
 System Name: CORE-SW-01
 "#;
 
-        assert_eq!(extract_remote_interface_from_lldp(lldp_data), vec!["Gi2/0/1"]);
+        assert_eq!(
+            extract_remote_interface_from_lldp(lldp_data),
+            vec!["Gi2/0/1"]
+        );
 
         let no_port_data = r#"
 Local Intf: Gi1/0/1
@@ -648,7 +662,10 @@ Port id: not advertised
 System Name: CORE-SW-01
 "#;
 
-        assert_eq!(extract_remote_interface_from_lldp(no_port_data), Vec::<String>::new());
+        assert_eq!(
+            extract_remote_interface_from_lldp(no_port_data),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -661,7 +678,10 @@ Management Addresses:
 Port id: Gi2/0/1
 "#;
 
-        assert_eq!(extract_management_ip_from_lldp(lldp_data), Some("10.0.99.2".to_string()));
+        assert_eq!(
+            extract_management_ip_from_lldp(lldp_data),
+            Some("10.0.99.2".to_string())
+        );
 
         let no_mgmt_data = r#"
 Local Intf: Gi1/0/1
@@ -690,7 +710,10 @@ Enabled Capabilities: B, R, T
 Port id: Gi2/0/1
 "#;
 
-        assert_eq!(extract_capabilities_from_lldp(spaced_caps), vec!["B", "R", "T"]);
+        assert_eq!(
+            extract_capabilities_from_lldp(spaced_caps),
+            vec!["B", "R", "T"]
+        );
 
         let no_caps_data = r#"
 Local Intf: Gi1/0/1
@@ -699,7 +722,10 @@ Enabled Capabilities: not advertised
 Port id: Gi2/0/1
 "#;
 
-        assert_eq!(extract_capabilities_from_lldp(no_caps_data), Vec::<String>::new());
+        assert_eq!(
+            extract_capabilities_from_lldp(no_caps_data),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

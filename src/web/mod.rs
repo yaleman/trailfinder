@@ -878,15 +878,16 @@ pub async fn web_server_command(
         info!("Using TLS key: {}", key_path.display());
 
         // Determine hostname (explicit override or extract from certificate)
-        let (hostname, hostname_source) = if let Some(explicit_hostname) = app_config.get_tls_hostname() {
-            info!("Using explicit TLS hostname: {}", explicit_hostname);
-            (explicit_hostname.to_string(), "explicitly configured")
-        } else {
-            info!("Extracting hostname from certificate...");
-            let extracted = extract_hostname_from_cert(cert_path)?;
-            info!("Extracted hostname from certificate: {}", extracted);
-            (extracted, "extracted from certificate")
-        };
+        let (hostname, hostname_source) =
+            if let Some(explicit_hostname) = app_config.get_tls_hostname() {
+                info!("Using explicit TLS hostname: {}", explicit_hostname);
+                (explicit_hostname.to_string(), "explicitly configured")
+            } else {
+                info!("Extracting hostname from certificate...");
+                let extracted = extract_hostname_from_cert(cert_path)?;
+                info!("Extracted hostname from certificate: {}", extracted);
+                (extracted, "extracted from certificate")
+            };
 
         // Load TLS certificate and key as raw PEM data
         let cert_pem = fs::read_to_string(cert_path).map_err(|e| {
