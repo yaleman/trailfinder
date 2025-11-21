@@ -15,7 +15,7 @@ askama_web = { version = "0.14.6", features = ["axum-0.8"] }
 axum = { version = "0.8.6", features = ["http2"] }
 chrono = { version = "0.4", features = ["serde"] }
 cidr = { version = "0.3.1", features = ["serde"] }
-clap = { version = "4.5.51", features = ["derive", "env"] }
+clap = { version = "4.5.53", features = ["derive", "env"] }
 dirs = "6.0"
 regex = "1.12.2"
 russh = { version = "0.54.6", features = ["yasna"] }
