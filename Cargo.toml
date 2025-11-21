@@ -32,7 +32,7 @@ tower-http = { version = "0.6.6", features = ["fs", "trace"] }
 tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
-axum-server = { version = "0.7.2", features = ["tls-rustls"] }
+axum-server = { version = "0.7.3", features = ["tls-rustls"] }
 x509-parser = "0.18.0"
 mac_address = { version = "1.1.8", features = ["serde"] }
 thirtyfour = "0.36.1"
