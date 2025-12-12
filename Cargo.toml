@@ -28,7 +28,7 @@ shellexpand = { version = "3.1.1", features = ["path"] }
 tokio = { version = "1.48", features = ["full"] }
 tokio-util = "0.7.17"
 tower = "0.5.2"
-tower-http = { version = "0.6.7", features = ["fs", "trace"] }
+tower-http = { version = "0.6.8", features = ["fs", "trace"] }
 tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.19.0", features = ["serde", "v4"] }
