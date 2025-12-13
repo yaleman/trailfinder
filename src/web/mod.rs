@@ -14,7 +14,9 @@ use rustls_pki_types::{
     pem::PemObject,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, io::BufReader, path::Path as StdPath, sync::Arc};
+use std::{
+    collections::HashMap, fs, io::BufReader, net::SocketAddr, path::Path as StdPath, sync::Arc,
+};
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
@@ -952,7 +954,7 @@ pub async fn web_server_command(
 
         axum_server::bind_rustls(
             bind_addr
-                .parse()
+                .parse::<SocketAddr>()
                 .map_err(|e| TrailFinderError::Generic(format!("Invalid bind address: {}", e)))?,
             tls_config,
         )
