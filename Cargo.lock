@@ -252,9 +252,9 @@ dependencies = [
 
 [[package]]
 name = "askama_web"
-version = "0.14.6"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50dcd7d2caaff31b91ef5d112ed10416344e23a33db9e7eea7ba695d2a97a88a"
+checksum = "e1acadd534892f9ef8c3809b47997e3cd857fad735edceff77a88be1c8236920"
 dependencies = [
  "askama",
  "askama_web_derive",
