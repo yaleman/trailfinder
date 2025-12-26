@@ -11,7 +11,7 @@ repository = "https://github.com/yaleman/trailfinder"
 
 [dependencies]
 askama = "0.15.0"
-askama_web = { version = "0.14.7", features = ["axum-0.8"] }
+askama_web = { version = "0.15.0", features = ["axum-0.8"] }
 axum = { version = "0.8.8", features = ["http2"] }
 chrono = { version = "0.4", features = ["serde"] }
 cidr = { version = "0.3.2", features = ["serde"] }
@@ -45,6 +45,5 @@ rustls = { version = "0.23.35", features = ["aws-lc-rs"] }
 [dev-dependencies]
 rand = "0.9.2"
 reqwest = { version = "0.12.28", features = ["json"] }
-tempfile = "3.23.0"
-terminator-rs = "0.23.35"
+tempfile = "3.24.0"
 tokio-test = "0.4.4"
