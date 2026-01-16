@@ -27,7 +27,7 @@ shellexpand = { version = "3.1.1", features = ["path"] }
 # SSH agent - basic socket connectivity check implemented
 tokio = { version = "1.49", features = ["full"] }
 tokio-util = "0.7.18"
-tower = "0.5.2"
+tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["fs", "trace"] }
 tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -39,7 +39,7 @@ thirtyfour = "0.36.1"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 dialoguer = "0.12.0"
-rustls-pki-types = "1.13.2"
+rustls-pki-types = "1.13.3"
 rustls = { version = "0.23.36", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
