@@ -10,7 +10,7 @@ repository = "https://github.com/yaleman/trailfinder"
 
 
 [dependencies]
-askama = "0.15.4"
+askama = "0.15.6"
 askama_web = { version = "0.15.2", features = ["axum-0.8"] }
 axum = { version = "0.8.8", features = ["http2"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -31,7 +31,7 @@ tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["fs", "trace"] }
 tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uuid = { version = "1.22.0", features = ["serde", "v4"] }
+uuid = { version = "1.23.0", features = ["serde", "v4"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 x509-parser = "0.18.1"
 mac_address = { version = "1.1.8", features = ["serde"] }
