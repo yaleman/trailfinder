@@ -25,7 +25,7 @@ serde_json = "1.0.149"
 serde_with = { version = "3.18.0", features = ["chrono", "json"] }
 shellexpand = { version = "3.1.2", features = ["path"] }
 # SSH agent - basic socket connectivity check implemented
-tokio = { version = "1.50", features = ["full"] }
+tokio = { version = "1.51", features = ["full"] }
 tokio-util = "0.7.18"
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["fs", "trace"] }
