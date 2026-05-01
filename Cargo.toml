@@ -10,8 +10,8 @@ repository = "https://github.com/yaleman/trailfinder"
 
 
 [dependencies]
-askama = "0.15.6"
-askama_web = { version = "0.15.2", features = ["axum-0.8"] }
+askama = "0.16.0"
+askama_web = { version = "0.16.0", features = ["axum-0.8"] }
 axum = { version = "0.8.9", features = ["http2"] }
 chrono = { version = "0.4", features = ["serde"] }
 cidr = { version = "0.3.2", features = ["serde"] }
@@ -35,15 +35,15 @@ uuid = { version = "1.23.1", features = ["serde", "v4"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 x509-parser = "0.18.1"
 mac_address = { version = "1.1.8", features = ["serde"] }
-thirtyfour = "0.36.1"
+thirtyfour = "0.36.3"
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 dialoguer = "0.12.0"
 rustls-pki-types = "1.14.1"
-rustls = { version = "0.23.39", features = ["aws-lc-rs"] }
+rustls = { version = "0.23.40", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 rand = "0.9.4"
-reqwest = { version = "0.13.2", features = ["json"] }
+reqwest = { version = "0.13.3", features = ["json"] }
 tempfile = "3.27.0"
 tokio-test = "0.4.5"
