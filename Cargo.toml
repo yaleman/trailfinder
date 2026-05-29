@@ -31,7 +31,7 @@ tower = "0.5.3"
 tower-http = { version = "0.6.11", features = ["fs", "trace"] }
 tracing = { version = "0.1", features = ["release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-uuid = { version = "1.23.1", features = ["serde", "v4"] }
+uuid = { version = "1.23.2", features = ["serde", "v4"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 x509-parser = "0.18.1"
 mac_address = { version = "1.1.8", features = ["serde"] }
@@ -44,6 +44,6 @@ rustls = { version = "0.23.40", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 rand = "0.9.4"
-reqwest = { version = "0.13.3", features = ["json"] }
+reqwest = { version = "0.13.4", features = ["json"] }
 tempfile = "3.27.0"
 tokio-test = "0.4.5"
