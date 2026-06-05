@@ -19,7 +19,7 @@ jobs:
       - name: Install rust stable
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: install chromedriver
-        uses: nanasess/setup-chromedriver@v2
+        uses: nanasess/setup-chromedriver@v3
       - name: Install typical dependencies
         run: |
           sudo apt-get update && \
