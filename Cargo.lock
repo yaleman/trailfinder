@@ -78,9 +78,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.13"
+version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "anstyle-parse"
@@ -645,9 +645,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.1"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
+checksum = "dd059f9da4f5c36b3787f65d38ccaab1cc315f07b01f89abc8359ee6a8205011"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -655,9 +655,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.0"
+version = "4.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714a53001bf66416adb0e2ef5ac857140e7dc3a0c48fb28b2f10762fc4b5069f"
+checksum = "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b"
 dependencies = [
  "anstream",
  "anstyle",
@@ -787,7 +787,7 @@ checksum = "0940496e5c83c54f3b753d5317daec82e8edac71c33aaa1f666d76f518de2444"
 dependencies = [
  "hax-lib",
  "pastey 0.1.1",
- "rand 0.9.4",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -2027,7 +2027,7 @@ dependencies = [
  "libcrux-secrets",
  "libcrux-sha3",
  "libcrux-traits",
- "rand 0.9.4",
+ "rand 0.9.5",
  "tls_codec",
 ]
 
@@ -2068,7 +2068,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9adfd58e79d860f6b9e40e35127bfae9e5bd3ade33201d1347459011a2add034"
 dependencies = [
  "libcrux-secrets",
- "rand 0.9.4",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -2724,7 +2724,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.3",
  "lru-slab",
- "rand 0.9.4",
+ "rand 0.9.5",
  "ring",
  "rustc-hash",
  "rustls",
@@ -2778,9 +2778,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.4"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -2872,9 +2872,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2884,9 +2884,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.13"
+version = "0.4.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
+checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3051,7 +3051,7 @@ dependencies = [
  "pkcs1 0.8.0-rc.4",
  "pkcs5",
  "pkcs8 0.10.2",
- "rand 0.9.4",
+ "rand 0.9.5",
  "rand_core 0.10.0-rc-3",
  "rsa 0.10.0-rc.10",
  "russh-cryptovec 0.52.0",
@@ -3247,9 +3247,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.41"
+version = "0.23.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b92b125634d9b795e7beca796cc790df15a7fb38323bf3196fda83292d06b1f"
+checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -4049,9 +4049,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.52.3"
+version = "1.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc7f01b389ac15039e4dc9531aa973a135d7a4135281b12d7c1bc79fd57fffe"
+checksum = "d988bcd52dbe076d3d46903332f58c912b87a2c49b1428419a5845154762ffee"
 dependencies = [
  "bytes",
  "libc",
@@ -4269,7 +4269,7 @@ dependencies = [
  "dialoguer",
  "dirs",
  "mac_address",
- "rand 0.9.4",
+ "rand 0.9.5",
  "regex",
  "reqwest",
  "russh",
@@ -4428,9 +4428,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.23.4"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
  "getrandom 0.4.1",
  "js-sys",
