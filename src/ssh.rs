@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, decode_secret_key};
 use russh::{client, keys::ssh_key};
@@ -78,9 +79,39 @@ impl From<TrailFinderError> for SshError {
     }
 }
 
-// SSH Agent integration using russh's built-in AgentClient
-// Note: Current implementation lists identities but requires additional work
-// for full signing integration with russh's authentication system
+// Keep the certificate attached to an agent identity when authenticating: using
+// its underlying public key would send a different authentication request.
+enum AgentAuthTarget<'a> {
+    PublicKey(&'a ssh_key::PublicKey),
+    Certificate(&'a ssh_key::Certificate),
+}
+
+fn agent_auth_target(identity: &AgentIdentity) -> AgentAuthTarget<'_> {
+    match identity {
+        AgentIdentity::PublicKey { key, .. } => AgentAuthTarget::PublicKey(key),
+        AgentIdentity::Certificate { certificate, .. } => AgentAuthTarget::Certificate(certificate),
+    }
+}
+
+async fn authenticate_agent_identity<S: russh::auth::Signer>(
+    session: &mut client::Handle<ClientHandler>,
+    username: &str,
+    identity: &AgentIdentity,
+    signer: &mut S,
+) -> Result<client::AuthResult, S::Error> {
+    match agent_auth_target(identity) {
+        AgentAuthTarget::PublicKey(key) => {
+            session
+                .authenticate_publickey_with(username, key.clone(), None, signer)
+                .await
+        }
+        AgentAuthTarget::Certificate(certificate) => {
+            session
+                .authenticate_certificate_with(username, certificate.clone(), None, signer)
+                .await
+        }
+    }
+}
 
 // Handler for russh client
 #[derive(Clone)]
@@ -554,7 +585,7 @@ impl SshClient {
                     && *identity_idx < identities.len()
                 {
                     debug!("Using cached SSH agent identity {}", identity_idx + 1);
-                    let public_key = &identities[*identity_idx];
+                    let identity = &identities[*identity_idx];
 
                     // Try the cached identity
                     let mut agent_signer = match AgentClient::connect_env().await {
@@ -565,14 +596,13 @@ impl SshClient {
                         }
                     };
 
-                    let auth_result = match session
-                        .authenticate_publickey_with(
-                            &self.connection_info.username,
-                            public_key.clone(),
-                            None,
-                            &mut agent_signer,
-                        )
-                        .await
+                    let auth_result = match authenticate_agent_identity(
+                        session,
+                        &self.connection_info.username,
+                        identity,
+                        &mut agent_signer,
+                    )
+                    .await
                     {
                         Ok(result) => result,
                         Err(e) => {
@@ -615,13 +645,13 @@ impl SshClient {
                         identities.len().div_ceil(BATCH_SIZE)
                     );
 
-                    for (i, public_key) in batch.iter().enumerate() {
+                    for (i, identity) in batch.iter().enumerate() {
                         let global_idx = batch_idx * BATCH_SIZE + i + 1;
                         debug!(
                             "Trying SSH agent identity {}/{}: type={:?}",
                             global_idx,
                             identities.len(),
-                            public_key.algorithm()
+                            identity.public_key().algorithm()
                         );
 
                         // Create a new agent client for each attempt since authenticate_publickey_with needs a mutable reference
@@ -656,13 +686,13 @@ impl SshClient {
                             }
                         };
 
-                        // Use the AgentClient as a Signer with russh's authenticate_publickey_with
+                        // Use the agent as signer for either a key or a certificate.
                         let auth_result = match tokio::time::timeout(
                             tokio::time::Duration::from_secs(10),
-                            session.authenticate_publickey_with(
+                            authenticate_agent_identity(
+                                session,
                                 &self.connection_info.username,
-                                public_key.clone(),
-                                None, // hash_alg - let russh choose the appropriate hash algorithm
+                                identity,
                                 &mut agent_signer,
                             ),
                         )
@@ -1356,6 +1386,36 @@ mod tests {
     use crate::config::ssh::SshConfig;
     use crate::{DeviceType, config::DeviceBrand};
     use std::time::Duration;
+
+    #[test]
+    fn agent_auth_target_preserves_key_and_certificate_identities() {
+        let ca_key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("generate CA key");
+        let user_key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+            .expect("generate user key");
+        let plain_identity = AgentIdentity::from(user_key.public_key().clone());
+        assert!(matches!(
+            agent_auth_target(&plain_identity),
+            AgentAuthTarget::PublicKey(key) if key == user_key.public_key()
+        ));
+
+        let mut builder = ssh_key::certificate::Builder::new_with_random_nonce(
+            &mut rand::rng(),
+            user_key.public_key(),
+            0,
+            u64::MAX,
+        )
+        .expect("create certificate");
+        builder
+            .cert_type(ssh_key::certificate::CertType::User)
+            .expect("user certificate");
+        let certificate = builder.sign(&ca_key).expect("sign certificate");
+        let cert_identity = AgentIdentity::from(certificate.clone());
+        assert!(matches!(
+            agent_auth_target(&cert_identity),
+            AgentAuthTarget::Certificate(cert) if cert == &certificate
+        ));
+    }
 
     #[tokio::test]
     async fn test_ssh_config_integration() {
