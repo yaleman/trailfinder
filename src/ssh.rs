@@ -436,7 +436,7 @@ impl SshClient {
             .map_err(|e| {
                 SshError::Connection(format!(
                     "address={} error={e}",
-                    &self.connection_info.address
+                    self.connection_info.address
                 ))
             })?;
 
