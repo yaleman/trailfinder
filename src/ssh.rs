@@ -93,7 +93,7 @@ fn agent_auth_target(identity: &AgentIdentity) -> AgentAuthTarget<'_> {
     }
 }
 
-async fn authenticate_agent_identity<S: russh::auth::Signer>(
+async fn authenticate_agent_identity<S: russh::Signer>(
     session: &mut client::Handle<ClientHandler>,
     username: &str,
     identity: &AgentIdentity,
@@ -1389,9 +1389,9 @@ mod tests {
 
     #[test]
     fn agent_auth_target_preserves_key_and_certificate_identities() {
-        let ca_key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+        let ca_key = ssh_key::PrivateKey::random(&mut rand10::rng(), ssh_key::Algorithm::Ed25519)
             .expect("generate CA key");
-        let user_key = ssh_key::PrivateKey::random(&mut rand::rng(), ssh_key::Algorithm::Ed25519)
+        let user_key = ssh_key::PrivateKey::random(&mut rand10::rng(), ssh_key::Algorithm::Ed25519)
             .expect("generate user key");
         let plain_identity = AgentIdentity::from(user_key.public_key().clone());
         assert!(matches!(
@@ -1400,7 +1400,7 @@ mod tests {
         ));
 
         let mut builder = ssh_key::certificate::Builder::new_with_random_nonce(
-            &mut rand::rng(),
+            &mut rand10::rng(),
             user_key.public_key(),
             0,
             u64::MAX,

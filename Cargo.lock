@@ -4686,6 +4686,7 @@ dependencies = [
  "dialoguer",
  "dirs 7.0.0",
  "mac_address",
+ "rand 0.10.3",
  "rand 0.9.5",
  "regex",
  "reqwest",
