@@ -1402,13 +1402,16 @@ mod tests {
         let mut builder = ssh_key::certificate::Builder::new_with_random_nonce(
             &mut rand10::rng(),
             user_key.public_key(),
-            0,
-            u64::MAX,
+            1_700_000_000,
+            2_000_000_000,
         )
         .expect("create certificate");
         builder
             .cert_type(ssh_key::certificate::CertType::User)
             .expect("user certificate");
+        builder
+            .valid_principal("testuser")
+            .expect("certificate principal");
         let certificate = builder.sign(&ca_key).expect("sign certificate");
         let cert_identity = AgentIdentity::from(certificate.clone());
         assert!(matches!(
