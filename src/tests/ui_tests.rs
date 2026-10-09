@@ -2,7 +2,7 @@ use crate::config::AppConfig;
 use crate::tests::ChromeDriverHandle;
 use crate::web::web_server_command;
 use crate::{TrailFinderError, setup_test_logging};
-use rand::Rng;
+use rand::RngExt;
 use std::time::Duration;
 use thirtyfour::prelude::*;
 use tokio::task::JoinHandle;

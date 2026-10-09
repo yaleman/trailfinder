@@ -13,13 +13,13 @@ jobs:
   cargo_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: Install rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v2
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - name: install chromedriver
-        uses: nanasess/setup-chromedriver@v3
+        uses: nanasess/setup-chromedriver@e913548694400f275b4070efcd90f47dbbc8914c # v3
       - name: Install typical dependencies
         run: |
           sudo apt-get update && \
