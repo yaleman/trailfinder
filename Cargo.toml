@@ -42,7 +42,7 @@ rustls-pki-types = "1.15.1"
 rustls = { version = "0.23.45", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
-rand = "0.9.5"
+rand = "0.10.3"
 rand10 = { package = "rand", version = "0.10.3" }
 reqwest = { version = "0.13.5", features = ["json"] }
 tempfile = "3.27.0"
