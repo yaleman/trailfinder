@@ -34,7 +34,7 @@ uuid = { version = "1.27.0", features = ["serde", "v4"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 x509-parser = "0.18.1"
 mac_address = { version = "1.2.0", features = ["serde"] }
-thirtyfour = "0.37.7"
+thirtyfour = "0.38.0"
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "10.0.1", features = ["axum"] }
 dialoguer = "0.12.0"
