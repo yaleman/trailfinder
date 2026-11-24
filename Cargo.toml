@@ -5,7 +5,6 @@ edition = "2024"
 
 description = "System for mapping and tracing routes through network devices."
 license = "MPL-2.0"
-homepage = "https://github.com/yaleman/trailfinder"
 repository = "https://github.com/yaleman/trailfinder"
 
 
