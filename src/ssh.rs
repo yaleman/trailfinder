@@ -122,7 +122,7 @@ impl client::Handler for ClientHandler {
     #[allow(unused_variables)]
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }
